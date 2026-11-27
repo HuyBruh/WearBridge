@@ -634,7 +634,7 @@ class AncsService : Service() {
 
         val builder = NotificationCompat.Builder(this, channelId)
             .setSmallIcon(iconResId)
-            .setLargeIcon(androidx.core.graphics.drawable.IconCompat.createWithResource(this, iconResId))
+            .setLargeIcon(AppIconMapper.getIcon(this, notification.appIdentifier, notification.categoryId))
             .setContentTitle(senderName)
             .setContentText(messagePreview)
             .setSubText(appName ?: notification.appIdentifier)
