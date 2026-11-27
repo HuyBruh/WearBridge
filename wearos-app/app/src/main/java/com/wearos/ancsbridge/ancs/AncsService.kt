@@ -634,6 +634,7 @@ class AncsService : Service() {
 
         val builder = NotificationCompat.Builder(this, channelId)
             .setSmallIcon(iconResId)
+            .setLargeIcon(androidx.core.graphics.drawable.IconCompat.createWithResource(this, iconResId))
             .setContentTitle(senderName)
             .setContentText(messagePreview)
             .setSubText(appName ?: notification.appIdentifier)
@@ -665,6 +666,7 @@ class AncsService : Service() {
         if (messagePreview.isNotEmpty()) {
             val person = androidx.core.app.Person.Builder()
                 .setName(senderName)
+                .setIcon(androidx.core.graphics.drawable.IconCompat.createWithResource(this, iconResId))
                 .build()
             builder.setStyle(
                 NotificationCompat.MessagingStyle(person)

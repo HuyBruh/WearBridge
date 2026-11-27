@@ -83,79 +83,15 @@ fun HomeScreen(
     val phoneSummary by viewModel.phoneSummary.collectAsState()
     val supportedCommands by viewModel.supportedCommands.collectAsState()
     val mediaAvailable by viewModel.mediaAvailable.collectAsState()
+    var panel by remember { mutableStateOf<String?>(null) }
+    BackHandler(enabled = panel != null) { panel = null }
 
-    ScalingLazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        item {
-            ListHeader {
-                Text("WearBridge")
-            }
-        }
-
-        item { Button(onClick = onWorkout) { Text("Workouts") } }
-
-        when (connectionState) {
-            is ConnectionState.Connected -> {
-                val deviceName = (connectionState as ConnectionState.Connected).deviceName ?: "iPhone"
-
-                // Status
-                item {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 8.dp)
-                    ) {
-                        Icon(
-                            Icons.Rounded.CheckCircle,
-                            contentDescription = null,
-                            tint = Color(0xFF34D399),
-                            modifier = Modifier.size(22.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Column {
-                            Text("Connected", fontSize = 14.sp)
-                            Text(
-                                "Notifications active",
-                                fontSize = 11.sp,
-                                color = Color(0xFF34D399)
-                            )
-                        }
-                    }
-                }
-
-                // iPhone info
-                item {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .fillMaxWidth(0.9f)
-                            .padding(vertical = 4.dp)
-                    ) {
-                        Icon(
-                            Icons.Rounded.PhoneIphone,
-                            contentDescription = null,
-                            tint = Color(0xFF60A5FA),
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Column {
-                            Text(deviceName, fontSize = 14.sp)
-                            Text(
-                                "via ANCS over BLE",
-                                fontSize = 11.sp,
-                                color = Color(0xFF9CA3AF)
-                            )
-                        }
-                    }
-                }
-
-                item { Spacer(modifier = Modifier.height(8.dp)) }
-
-                if (phoneTools) {
+    if (panel != null && connectionState is ConnectionState.Connected) {
+        ScalingLazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+                if (panel == "iPhone" && phoneTools) {
                     item { ListHeader { Text("iPhone tools") } }
                     if (phoneSummary.isNotEmpty()) item {
                         Text(phoneSummary, modifier = Modifier.padding(horizontal = 16.dp), textAlign = TextAlign.Center)
@@ -165,8 +101,8 @@ fun HomeScreen(
                     }
                 }
 
-                if (mediaAvailable) {
-                    item { ListHeader { Text("iPhone media") } }
+                if (panel == "Now playing" && mediaAvailable) {
+                    item { ListHeader { Text("Now playing") } }
                     if (nowPlaying.title.isNotBlank() || nowPlaying.artist.isNotBlank()) {
                         item {
                             Column(
@@ -190,6 +126,50 @@ fun HomeScreen(
                             }
                         }
                     }
+                }
+
+
+            item { DashboardButton("Back", null) { panel = null } }
+        }
+        return
+    }
+
+    ScalingLazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        item {
+            ListHeader {
+                Text("WearBridge")
+            }
+        }
+
+        when (connectionState) {
+            is ConnectionState.Connected -> {
+                val deviceName = (connectionState as ConnectionState.Connected).deviceName ?: "iPhone"
+
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(0.9f).padding(vertical = 6.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Rounded.CheckCircle, contentDescription = null,
+                            tint = Color(0xFF34D399), modifier = Modifier.size(20.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Column {
+                            Text(deviceName, fontSize = 15.sp, maxLines = 1)
+                            Text("Connected", color = Color(0xFF34D399), fontSize = 11.sp)
+                        }
+                    }
+                }
+
+                item { DashboardButton("Workouts", "Record or sync a session", onWorkout) }
+                if (phoneTools) {
+                    item { DashboardButton("iPhone", "Battery, ping & camera") { panel = "iPhone" } }
+                }
+                if (mediaAvailable) {
+                    item { DashboardButton("Now playing", nowPlaying.title.ifBlank { "Playback controls" }) { panel = "Now playing" } }
                 }
 
                 item {
@@ -251,6 +231,7 @@ fun HomeScreen(
             }
 
             else -> {
+                item { DashboardButton("Workouts", "Record offline", onWorkout) }
                 // Idle / Disconnected / Error — show reconnect or pair
 
                 if (viewModel.hasBondedIPhone()) {
@@ -599,5 +580,18 @@ private fun WorkoutScreen(vm: MainViewModel, back: () -> Unit) {
             item { Button(onClick = vm::syncWorkouts) { Text("Sync to Apple Health") } }
         }
         item { Button(onClick = back) { Text("Back") } }
+    }
+}
+
+@Composable
+private fun DashboardButton(title: String, subtitle: String?, onClick: () -> Unit) {
+    Button(onClick = onClick, modifier = Modifier.fillMaxWidth(0.9f)) {
+        Column {
+            Text(title, fontSize = 14.sp, maxLines = 1)
+            if (!subtitle.isNullOrBlank()) {
+                Text(subtitle, fontSize = 11.sp, maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+            }
+        }
     }
 }

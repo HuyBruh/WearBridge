@@ -13,25 +13,38 @@ struct SettingsView: View {
     @AppStorage("syncWorkouts") private var syncWorkouts = false
     @State private var cameraOpen = false
     @State private var toolsMessage = ""
+    @State private var healthIssue: String?
+    @State private var requestingHealth = false
 
     var body: some View {
         NavigationStack {
             List {
-                Section("Pixel Watch tools") {
-                    Button(syncWorkouts ? "Disable workout import" : "Allow Apple Health workouts") {
-                        if syncWorkouts { syncWorkouts = false }
-                        else { Task {
-                            guard HKHealthStore.isHealthDataAvailable() else { toolsMessage = "HealthKit unavailable."; return }
-                            let store = HKHealthStore()
-                            let type = HKObjectType.workoutType()
-                            do {
-                                try await store.requestAuthorization(toShare: [type], read: [])
-                                syncWorkouts = store.authorizationStatus(for: type) == .sharingAuthorized
-                                if !syncWorkouts { toolsMessage = "Allow workout writes in Health." }
-                            } catch { toolsMessage = "Health authorization unavailable for this installation." }
-                        } }
+                Section("Health") {
+                    Button {
+                        Task { await updateHealth() }
+                    } label: {
+                        Label {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("Apple Health").foregroundStyle(.primary)
+                                Text(requestingHealth ? "Requesting access…" : (syncWorkouts ? "Workout sync on · tap to pause" : "Connect to save workouts"))
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
+                            }
+                        } icon: {
+                            Image(systemName: "heart.fill").foregroundStyle(.pink)
+                        }
                     }
-                    Toggle("Allow ping notifications", isOn: $allowPing)
+                    .disabled(requestingHealth)
+                    if let healthIssue {
+                        Label(healthIssue, systemImage: "info.circle")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Section("iPhone controls") {
+                    Toggle(isOn: $allowPing) {
+                        Label("Ping iPhone", systemImage: "bell")
+                    }
                     Button(shareAgenda ? "Stop sharing calendar" : "Share next 24 hours of calendar") {
                         if shareAgenda { shareAgenda = false }
                         else { Task {
@@ -58,8 +71,7 @@ struct SettingsView: View {
                         cameraOpen = false
                     }.ignoresSafeArea()
                 }
-                // Features
-                Section {
+                Section("Calls") {
                     NavigationLink {
                         QuickReplySettingsView()
                     } label: {
@@ -116,8 +128,43 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("Settings")
+            .navigationBarTitleDisplayMode(.inline)
             .onAppear {
                 liveCallStatusEnabled = viewModel.peripheralManager.settingsStore.liveCallStatus
+            }
+        }
+    }
+    @MainActor
+    private func updateHealth() async {
+        healthIssue = nil
+        guard HKHealthStore.isHealthDataAvailable() else {
+            healthIssue = "Apple Health is unavailable on this device."
+            return
+        }
+
+        let store = HKHealthStore()
+        let workout = HKObjectType.workoutType()
+        let status = store.authorizationStatus(for: workout)
+        if status == .sharingAuthorized {
+            syncWorkouts.toggle()
+            return
+        }
+
+        syncWorkouts = false
+        requestingHealth = true
+        defer { requestingHealth = false }
+        do {
+            try await store.requestAuthorization(toShare: [workout], read: [])
+            syncWorkouts = store.authorizationStatus(for: workout) == .sharingAuthorized
+            if !syncWorkouts {
+                healthIssue = "In Apple Health, open your profile, find WearBridge under Apps and Services, and allow Workouts."
+            }
+        } catch {
+            let failure = error as NSError
+            if failure.localizedDescription.localizedCaseInsensitiveContains("entitlement") {
+                healthIssue = "This installation lacks HealthKit in its signature. Reinstall using a provisioning profile with HealthKit enabled for this app."
+            } else {
+                healthIssue = "\(failure.localizedDescription) (\(failure.domain) \(failure.code))"
             }
         }
     }
