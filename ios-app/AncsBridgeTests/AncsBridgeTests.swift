@@ -3,6 +3,20 @@ import XCTest
 
 final class AncsBridgeTests: XCTestCase {
 
+    func testWatchDraftPreservesVietnameseAndPunctuation() throws {
+        let json = #"{"id":"12345678-1234-1234-1234-123456789012","sender":"Huy | Minh","body":"Đến rồi 👍"}"#
+        let draft = try JSONDecoder().decode(WatchDraft.self, from: Data(json.utf8))
+        XCTAssertEqual(draft.sender, "Huy | Minh")
+        XCTAssertEqual(draft.body, "Đến rồi 👍")
+    }
+
+    func testWorkoutRejectsInvalidInputsAndKeepsDuration() {
+        let id = UUID()
+        XCTAssertNil(TimedWorkout(id: id, kind: "Other", start: 1000, end: 2000).sample())
+        XCTAssertNil(TimedWorkout(id: id, kind: "Run", start: 4000, end: 2000).sample())
+        XCTAssertEqual(TimedWorkout(id: id, kind: "Run", start: 1000, end: 31000).sample()?.duration, 30)
+    }
+
     // MARK: - Quick reply URL
 
     func testQuickReplyURLEncodesQuerySeparators() throws {

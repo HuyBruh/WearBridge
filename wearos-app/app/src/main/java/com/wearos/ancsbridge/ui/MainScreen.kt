@@ -1,6 +1,7 @@
 package com.wearos.ancsbridge.ui
 
 import android.annotation.SuppressLint
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -38,6 +39,7 @@ import androidx.compose.material.icons.rounded.PhoneIphone
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Close
 import androidx.wear.compose.material3.Icon
+import com.wearos.ancsbridge.ble.MediaCommand
 import com.wearos.ancsbridge.model.ConnectionState
 import com.wearos.ancsbridge.viewmodel.MainViewModel
 
@@ -45,8 +47,14 @@ import com.wearos.ancsbridge.viewmodel.MainViewModel
 @Composable
 fun MainScreen(viewModel: MainViewModel) {
     var showPairScreen by remember { mutableStateOf(false) }
+    var showNotificationSettings by remember { mutableStateOf(false) }
 
-    if (showPairScreen) {
+    var showWorkout by remember { mutableStateOf(false) }
+    if (showWorkout) {
+        WorkoutScreen(viewModel) { showWorkout = false }
+    } else if (showNotificationSettings) {
+        NotificationSettingsScreen(viewModel) { showNotificationSettings = false }
+    } else if (showPairScreen) {
         PairNewDeviceScreen(
             viewModel = viewModel,
             onDismiss = { showPairScreen = false }
@@ -54,15 +62,27 @@ fun MainScreen(viewModel: MainViewModel) {
     } else {
         HomeScreen(
             viewModel = viewModel,
-            onPairNewDevice = { showPairScreen = true }
+            onWorkout = { showWorkout = true },
+            onPairNewDevice = { showPairScreen = true },
+            onNotificationSettings = { showNotificationSettings = true }
         )
     }
 }
 
 @SuppressLint("MissingPermission")
 @Composable
-fun HomeScreen(viewModel: MainViewModel, onPairNewDevice: () -> Unit) {
+fun HomeScreen(
+    viewModel: MainViewModel,
+    onWorkout: () -> Unit,
+    onPairNewDevice: () -> Unit,
+    onNotificationSettings: () -> Unit
+) {
     val connectionState by viewModel.connectionState.collectAsState()
+    val nowPlaying by viewModel.nowPlaying.collectAsState()
+    val phoneTools by viewModel.phoneTools.collectAsState()
+    val phoneSummary by viewModel.phoneSummary.collectAsState()
+    val supportedCommands by viewModel.supportedCommands.collectAsState()
+    val mediaAvailable by viewModel.mediaAvailable.collectAsState()
 
     ScalingLazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -73,6 +93,8 @@ fun HomeScreen(viewModel: MainViewModel, onPairNewDevice: () -> Unit) {
                 Text("WearBridge")
             }
         }
+
+        item { Button(onClick = onWorkout) { Text("Workouts") } }
 
         when (connectionState) {
             is ConnectionState.Connected -> {
@@ -132,6 +154,52 @@ fun HomeScreen(viewModel: MainViewModel, onPairNewDevice: () -> Unit) {
                 }
 
                 item { Spacer(modifier = Modifier.height(8.dp)) }
+
+                if (phoneTools) {
+                    item { ListHeader { Text("iPhone tools") } }
+                    if (phoneSummary.isNotEmpty()) item {
+                        Text(phoneSummary, modifier = Modifier.padding(horizontal = 16.dp), textAlign = TextAlign.Center)
+                    }
+                    listOf("Battery & agenda", "Ping iPhone", "Camera shutter").forEachIndexed { code, label ->
+                        item { Button(onClick = { viewModel.phoneControl(code) }, modifier = Modifier.fillMaxWidth(0.9f)) { Text(label) } }
+                    }
+                }
+
+                if (mediaAvailable) {
+                    item { ListHeader { Text("iPhone media") } }
+                    if (nowPlaying.title.isNotBlank() || nowPlaying.artist.isNotBlank()) {
+                        item {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier.padding(horizontal = 16.dp)
+                            ) {
+                                Text(nowPlaying.title, fontSize = 14.sp, maxLines = 2, textAlign = TextAlign.Center)
+                                if (nowPlaying.artist.isNotBlank()) {
+                                    Text(nowPlaying.artist, fontSize = 11.sp, maxLines = 1, textAlign = TextAlign.Center)
+                                }
+                            }
+                        }
+                    }
+                    MediaCommand.available(supportedCommands).forEach { command ->
+                        item {
+                            Button(
+                                onClick = { viewModel.sendMediaCommand(command.code) },
+                                modifier = Modifier.fillMaxWidth(0.9f)
+                            ) {
+                                Text(command.label, fontSize = 12.sp)
+                            }
+                        }
+                    }
+                }
+
+                item {
+                    Button(
+                        onClick = onNotificationSettings,
+                        modifier = Modifier.fillMaxWidth(0.9f)
+                    ) {
+                        Text("Notification Settings", fontSize = 12.sp)
+                    }
+                }
 
                 // Clear notifications
                 item {
@@ -281,6 +349,8 @@ fun PairNewDeviceScreen(viewModel: MainViewModel, onDismiss: () -> Unit) {
     val isScanning by viewModel.isScanning.collectAsState()
     val scanStatus by viewModel.scanStatus.collectAsState()
 
+    val paired = remember { viewModel.pairedPhones() }
+
     // Auto-dismiss when connected
     if (connectionState is ConnectionState.Connected) {
         onDismiss()
@@ -304,11 +374,21 @@ fun PairNewDeviceScreen(viewModel: MainViewModel, onDismiss: () -> Unit) {
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
             ) {
                 Text(
-                    "Make sure the WearBridge companion app is open on your iPhone",
+                    "Choose your paired iPhone below, or open WearBridge on iPhone and scan.",
                     textAlign = TextAlign.Center,
                     fontSize = 12.sp,
                     color = Color(0xFF9CA3AF)
                 )
+            }
+        }
+
+        if (connectionState !is ConnectionState.Connecting && connectionState !is ConnectionState.Bonding) {
+            paired.forEach { (name, address) ->
+                item(key = address) {
+                    Button(onClick = { viewModel.connectToDevice(address) }, modifier = Modifier.fillMaxWidth(0.9f)) {
+                        Text("Connect to $name")
+                    }
+                }
             }
         }
 
@@ -415,5 +495,109 @@ fun PairNewDeviceScreen(viewModel: MainViewModel, onDismiss: () -> Unit) {
                 }
             }
         }
+    }
+}
+
+
+@Composable
+private fun NotificationSettingsScreen(viewModel: MainViewModel, onBack: () -> Unit) {
+    val preferences = viewModel.notificationPreferences
+    val stats by viewModel.sessionStats.collectAsState()
+    val apps = remember { preferences.apps() }
+    var showPreviews by remember { mutableStateOf(preferences.showPreviews) }
+    var syncDismissals by remember { mutableStateOf(preferences.syncDismissals) }
+    var catchUp by remember { mutableStateOf(preferences.catchUp) }
+    BackHandler(onBack = onBack)
+
+    ScalingLazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        item { ListHeader { Text("Notifications") } }
+        item {
+            Button(
+                onClick = {
+                    showPreviews = !showPreviews
+                    preferences.showPreviews = showPreviews
+                    viewModel.clearAllNotifications()
+                },
+                modifier = Modifier.fillMaxWidth(0.9f)
+            ) {
+                Text(if (showPreviews) "Previews: On" else "Previews: Off")
+            }
+        }
+        item {
+            Button(onClick = {
+                catchUp = !catchUp
+                preferences.catchUp = catchUp
+            }, modifier = Modifier.fillMaxWidth(0.9f)) {
+                Text(if (catchUp) "Catch up quietly: On" else "Catch up quietly: Off")
+            }
+        }
+        item {
+            Text("This connection: ${stats.received} iPhone events · ${stats.posted} alert posts · ${stats.timeouts} timed out",
+                fontSize = 12.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(10.dp))
+        }
+        item {
+            Button(onClick = {
+                syncDismissals = !syncDismissals
+                preferences.syncDismissals = syncDismissals
+            }, modifier = Modifier.fillMaxWidth(0.9f)) {
+                Text(if (syncDismissals) "Sync dismissals: On" else "Sync dismissals: Off")
+            }
+        }
+        if (apps.isEmpty()) {
+            item {
+                Text(
+                    "Apps appear after their first alert.",
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(12.dp)
+                )
+            }
+        }
+        apps.forEach { (id, name) ->
+            item(key = id) {
+                var enabled by remember { mutableStateOf(preferences.isEnabled(id)) }
+                Button(
+                    onClick = {
+                        enabled = !enabled
+                        preferences.setEnabled(id, enabled)
+                    },
+                    modifier = Modifier.fillMaxWidth(0.9f)
+                ) {
+                    Text("$name: ${if (enabled) "On" else "Off"}", maxLines = 2)
+                }
+            }
+        }
+        item {
+            Button(onClick = onBack, modifier = Modifier.fillMaxWidth(0.9f)) {
+                Text("Back")
+            }
+        }
+    }
+}
+
+@Composable
+private fun WorkoutScreen(vm: MainViewModel, back: () -> Unit) {
+    val store = vm.workouts
+    val state by store.state.collectAsState()
+    val companion by vm.phoneTools.collectAsState()
+    BackHandler(onBack = back)
+    ScalingLazyColumn(horizontalAlignment = Alignment.CenterHorizontally) {
+        item { ListHeader { Text("Timed workout") } }
+        val current = state.first
+        if (current != null) {
+            item { Text("$current in progress") }
+            item { Button(onClick = { store.finish() }) { Text("Finish workout") } }
+        } else if (state.second < 50) {
+            listOf("Walk", "Run", "Cycle").forEach { kind ->
+                item { Button(onClick = { store.start(kind) }) { Text("Start $kind") } }
+            }
+        }
+        item { Text("Saved on watch: ${state.second}") }
+        if (state.second > 0 && companion) {
+            item { Button(onClick = vm::syncWorkouts) { Text("Sync to Apple Health") } }
+        }
+        item { Button(onClick = back) { Text("Back") } }
     }
 }
