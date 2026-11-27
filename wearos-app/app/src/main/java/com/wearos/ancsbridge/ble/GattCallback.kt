@@ -14,6 +14,7 @@ import android.util.Log
  */
 @SuppressLint("MissingPermission")
 class GattCallback(
+    private val isCurrentConnection: (BluetoothGatt) -> Boolean,
     private val onConnected: (BluetoothGatt) -> Unit,
     private val onDisconnected: (BluetoothGatt, Int) -> Unit,
     private val onServicesDiscoveredCallback: (BluetoothGatt, Int) -> Unit,
@@ -23,6 +24,7 @@ class GattCallback(
     private val onCharacteristicWritten: (BluetoothGattCharacteristic, Int) -> Unit,
     private val onMtuChanged: (Int, Int) -> Unit,
     private val onCharacteristicReadCallback: ((BluetoothGattCharacteristic, ByteArray) -> Unit)? = null,
+    private val onOtherCharacteristicChanged: (String, ByteArray) -> Unit,
     private val onCallStateChanged: ((ByteArray) -> Unit)? = null
 ) : BluetoothGattCallback() {
 
@@ -31,6 +33,7 @@ class GattCallback(
     }
 
     override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+        if (!isCurrentConnection(gatt)) return
         Log.d(TAG, "Connection state changed: status=$status newState=$newState")
         when (newState) {
             BluetoothProfile.STATE_CONNECTED -> {
@@ -44,7 +47,20 @@ class GattCallback(
         }
     }
 
+    override fun onServiceChanged(gatt: BluetoothGatt) {
+        if (isCurrentConnection(gatt)) gatt.disconnect()
+    }
+
+    override fun onCharacteristicRead(
+        gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, value: ByteArray, status: Int
+    ) {
+        if (isCurrentConnection(gatt) && status == BluetoothGatt.GATT_SUCCESS) {
+            onCharacteristicReadCallback?.invoke(characteristic, value)
+        }
+    }
+
     override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+        if (!isCurrentConnection(gatt)) return
         Log.d(TAG, "Services discovered: status=$status count=${gatt.services.size}")
         if (status == BluetoothGatt.GATT_SUCCESS) {
             gatt.services.forEach { service ->
@@ -59,6 +75,7 @@ class GattCallback(
         gatt: BluetoothGatt,
         characteristic: BluetoothGattCharacteristic
     ) {
+        if (!isCurrentConnection(gatt)) return
         val data = characteristic.value ?: return
         routeCharacteristicData(characteristic.uuid.toString().uppercase(), data)
     }
@@ -68,6 +85,7 @@ class GattCallback(
         characteristic: BluetoothGattCharacteristic,
         value: ByteArray
     ) {
+        if (!isCurrentConnection(gatt)) return
         routeCharacteristicData(characteristic.uuid.toString().uppercase(), value)
     }
 
@@ -85,9 +103,7 @@ class GattCallback(
                 Log.d(TAG, "Call State: ${data.toHexString()}")
                 onCallStateChanged?.invoke(data)
             }
-            else -> {
-                Log.d(TAG, "Unknown characteristic changed: $uuid")
-            }
+            else -> onOtherCharacteristicChanged(uuid, data)
         }
     }
 
@@ -96,6 +112,7 @@ class GattCallback(
         descriptor: BluetoothGattDescriptor,
         status: Int
     ) {
+        if (!isCurrentConnection(gatt)) return
         Log.d(TAG, "Descriptor written: ${descriptor.characteristic.uuid} status=$status")
         onDescriptorWritten(descriptor, status)
     }
@@ -106,6 +123,7 @@ class GattCallback(
         characteristic: BluetoothGattCharacteristic,
         status: Int
     ) {
+        if (!isCurrentConnection(gatt)) return
         Log.d(TAG, "Characteristic written: ${characteristic.uuid} status=$status")
         onCharacteristicWritten(characteristic, status)
     }
@@ -116,6 +134,7 @@ class GattCallback(
         characteristic: BluetoothGattCharacteristic,
         status: Int
     ) {
+        if (!isCurrentConnection(gatt)) return
         if (status == BluetoothGatt.GATT_SUCCESS) {
             val value = characteristic.value ?: return
             Log.d(TAG, "Characteristic read: ${characteristic.uuid} (${value.size} bytes)")
@@ -124,6 +143,7 @@ class GattCallback(
     }
 
     override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
+        if (!isCurrentConnection(gatt)) return
         Log.d(TAG, "MTU changed: mtu=$mtu status=$status")
         onMtuChanged(mtu, status)
     }

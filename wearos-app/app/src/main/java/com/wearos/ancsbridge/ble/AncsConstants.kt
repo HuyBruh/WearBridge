@@ -84,8 +84,7 @@ object AncsConstants {
 
     // Attributes that take a max-length parameter (2 bytes LE)
     val VARIABLE_LENGTH_ATTRIBUTES = setOf(
-        ATTR_TITLE, ATTR_SUBTITLE, ATTR_MESSAGE,
-        ATTR_POSITIVE_ACTION_LABEL, ATTR_NEGATIVE_ACTION_LABEL
+        ATTR_TITLE, ATTR_SUBTITLE, ATTR_MESSAGE
     )
 
     // Default max length for variable-length attributes

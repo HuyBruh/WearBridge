@@ -51,6 +51,8 @@ class ControlPointWriterTest {
             maxLength = 128
         )
 
+        assertArrayEquals(byteArrayOf(0, 1, 0, 0, 0, 0, 1, -128, 0, 2, -128, 0, 3, -128, 0, 5, 6, 7), data)
+
         // Should contain positive action label (attr 6) and negative action label (attr 7)
         val attrs = mutableListOf<Int>()
         var i = 5 // skip command + uid

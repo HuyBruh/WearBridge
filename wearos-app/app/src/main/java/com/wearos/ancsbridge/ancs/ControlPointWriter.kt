@@ -6,9 +6,9 @@ import java.io.ByteArrayOutputStream
 /**
  * Builds byte arrays for ANCS Control Point commands.
  *
- * Important: Variable-length attributes (Title, Subtitle, Message, action labels)
+ * Important: Variable-length attributes (Title, Subtitle, Message)
  * require a 2-byte LE max-length parameter. Fixed attributes (AppIdentifier, Date,
- * MessageSize) do NOT take a max-length parameter.
+ * MessageSize, action labels) do NOT take a max-length parameter.
  */
 object ControlPointWriter {
 
@@ -55,13 +55,11 @@ object ControlPointWriter {
         // PositiveActionLabel (attribute 6) — variable length
         if (hasPositiveAction) {
             buffer.write(AncsConstants.ATTR_POSITIVE_ACTION_LABEL)
-            writeUInt16LE(buffer, maxLength)
         }
 
         // NegativeActionLabel (attribute 7) — variable length
         if (hasNegativeAction) {
             buffer.write(AncsConstants.ATTR_NEGATIVE_ACTION_LABEL)
-            writeUInt16LE(buffer, maxLength)
         }
 
         return buffer.toByteArray()

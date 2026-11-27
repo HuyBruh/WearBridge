@@ -119,7 +119,7 @@ object AppIconMapper {
         // Other
         "com.producthunt.ProductHuntApp" to R.drawable.ic_social,
         "com.github.stormcrow" to R.drawable.ic_notification_default,
-    )
+    ).mapKeys { it.key.lowercase() }
 
     // Category-based fallback icons
     private val categoryIconMap = mapOf(
@@ -140,7 +140,7 @@ object AppIconMapper {
      * Get the icon resource ID for an app.
      */
     fun getIconResId(appIdentifier: String, categoryId: Int): Int {
-        return appIconMap[appIdentifier]
+        return appIconMap[appIdentifier.trim().lowercase()]
             ?: categoryIconMap[categoryId]
             ?: R.drawable.ic_notification_default
     }

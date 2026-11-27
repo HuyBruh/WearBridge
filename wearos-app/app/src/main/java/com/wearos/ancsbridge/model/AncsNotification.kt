@@ -15,4 +15,15 @@ data class AncsNotification(
     val eventFlags: Int,
     val positiveActionLabel: String?,
     val negativeActionLabel: String?
-)
+) {
+    // Only mirror an explicitly offered dismissal. Other negative actions can delete
+    // mail, decline invitations or reject calls. Unknown translations stay local.
+    fun dismissAction(): Int? {
+        val labels = setOf("dismiss", "clear", "clear notification", "xóa thông báo", "bỏ qua thông báo")
+        return when {
+            positiveActionLabel?.trim()?.lowercase() in labels -> 0
+            negativeActionLabel?.trim()?.lowercase() in labels -> 1
+            else -> null
+        }
+    }
+}

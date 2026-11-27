@@ -1,3 +1,6 @@
+import HealthKit
+import EventKit
+import UserNotifications
 import CoreBluetooth
 import Combine
 import UIKit
@@ -27,6 +30,7 @@ class PeripheralManager: NSObject, ObservableObject {
     private var companionService: CBMutableService?
     private var statusCharacteristic: CBMutableCharacteristic?
     private var callStateCharacteristic: CBMutableCharacteristic?
+    private var readSnapshots: [UUID: Data] = [:]
     private var serviceAdded = false
     private var scanTimer: Timer?
 
@@ -242,6 +246,13 @@ class PeripheralManager: NSObject, ObservableObject {
             permissions: [.writeable]
         )
 
+        UIDevice.current.isBatteryMonitoringEnabled = true
+        let workout = CBMutableCharacteristic(type: BLEConstants.workoutUUID, properties: [.write],
+            value: nil, permissions: [.writeEncryptionRequired])
+        let tools = CBMutableCharacteristic(type: BLEConstants.toolsUUID, properties: [.read, .write],
+                                            value: nil, permissions: [.readEncryptionRequired, .writeEncryptionRequired])
+        let draft = CBMutableCharacteristic(type: BLEConstants.draftUUID, properties: [.write],
+                                            value: nil, permissions: [.writeEncryptionRequired])
         callStateCharacteristic = CBMutableCharacteristic(
             type: BLEConstants.callStateCharacteristicUUID,
             properties: [.read, .notify],
@@ -253,7 +264,7 @@ class PeripheralManager: NSObject, ObservableObject {
             type: BLEConstants.companionServiceUUID,
             primary: true
         )
-        companionService?.characteristics = [statusCharacteristic!, quickReplyCharacteristic, callStateCharacteristic!]
+        companionService?.characteristics = [statusCharacteristic!, quickReplyCharacteristic, callStateCharacteristic!, draft, tools, workout]
 
         peripheralManager.add(companionService!)
         serviceAdded = true
@@ -299,8 +310,38 @@ extension PeripheralManager: CBPeripheralManagerDelegate {
         logger.info("Central unsubscribed: \(central.identifier)")
     }
 
+    private static func phoneSummary() -> Data {
+        let battery = UIDevice.current.batteryLevel
+        var lines = [battery < 0 ? "Battery unavailable" : "iPhone battery: \(Int((battery * 100).rounded()))%"]
+        if UserDefaults.standard.bool(forKey: "shareAgenda"),
+           EKEventStore.authorizationStatus(for: .event) == .fullAccess {
+            let store = EKEventStore()
+            let now = Date()
+            let end = now.addingTimeInterval(86400)
+            let predicate = store.predicateForEvents(withStart: now, end: end, calendars: nil)
+            let events = store.events(matching: predicate).sorted { $0.startDate < $1.startDate }
+            if events.isEmpty { lines.append("No events in the next 24 hours") }
+            for event in events.prefix(3) {
+                let time = event.isAllDay ? "All day" : event.startDate.formatted(date: .abbreviated, time: .shortened)
+                lines.append("\(time) · \(String((event.title ?? "Event").prefix(32)))")
+            }
+        }
+        var summary = lines.joined(separator: "\n")
+        while summary.utf8.count > 500 { summary.removeLast() }
+        return Data(summary.utf8)
+    }
+
     func peripheralManager(_ peripheral: CBPeripheralManager, didReceiveRead request: CBATTRequest) {
-        if request.characteristic.uuid == BLEConstants.connectionStatusUUID {
+        if request.characteristic.uuid == BLEConstants.toolsUUID {
+            let key = request.central.identifier
+            if request.offset == 0 { readSnapshots = [key: Self.phoneSummary()] }
+            guard let data = readSnapshots[key], request.offset <= data.count else {
+                peripheral.respond(to: request, withResult: .invalidOffset)
+                return
+            }
+            request.value = Data(data.dropFirst(request.offset))
+            peripheral.respond(to: request, withResult: .success)
+        } else if request.characteristic.uuid == BLEConstants.connectionStatusUUID {
             request.value = Data([0x01])
             peripheral.respond(to: request, withResult: .success)
         } else if request.characteristic.uuid == BLEConstants.callStateCharacteristicUUID {
@@ -312,11 +353,62 @@ extension PeripheralManager: CBPeripheralManagerDelegate {
     }
 
     func peripheralManager(_ peripheral: CBPeripheralManager, didReceiveWrite requests: [CBATTRequest]) {
+        guard let first = requests.first else { return }
+        if first.characteristic.uuid == BLEConstants.workoutUUID {
+            guard requests.count == 1, first.offset == 0, let data = first.value, data.count <= 512,
+                  let input = try? JSONDecoder().decode(TimedWorkout.self, from: data),
+                  let workout = input.sample(), UserDefaults.standard.bool(forKey: "syncWorkouts"),
+                  HKHealthStore.isHealthDataAvailable() else {
+                peripheral.respond(to: first, withResult: .requestNotSupported)
+                return
+            }
+            HKHealthStore().save(workout) { ok, _ in
+                DispatchQueue.main.async { peripheral.respond(to: first, withResult: ok ? .success : .unlikelyError) }
+            }
+            return
+        }
+        if first.characteristic.uuid == BLEConstants.toolsUUID {
+            guard requests.count == 1, first.offset == 0, let data = first.value, data.count == 1 else {
+                peripheral.respond(to: first, withResult: .invalidAttributeValueLength)
+                return
+            }
+            if data.first == 1, UserDefaults.standard.bool(forKey: "allowPing") {
+                let content = UNMutableNotificationContent()
+                content.title = "Ping from your Pixel Watch"
+                content.sound = .default
+                UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "watch-ping", content: content, trigger: nil)) { error in
+                    DispatchQueue.main.async { peripheral.respond(to: first, withResult: error == nil ? .success : .unlikelyError) }
+                }
+            } else if data.first == 2 {
+                DispatchQueue.main.async {
+                    guard UIApplication.shared.applicationState == .active, let camera = WatchCamera.active,
+                          camera.viewIfLoaded?.window != nil else {
+                        peripheral.respond(to: first, withResult: .requestNotSupported)
+                        return
+                    }
+                    WatchCamera.active = nil
+                    camera.takePicture()
+                    peripheral.respond(to: first, withResult: .success)
+                }
+            } else { peripheral.respond(to: first, withResult: .requestNotSupported) }
+            return
+        }
+        if first.characteristic.uuid == BLEConstants.draftUUID {
+            guard requests.count == 1, first.offset == 0, let bytes = first.value,
+                  bytes.count <= 512, let draft = try? JSONDecoder().decode(WatchDraft.self, from: bytes),
+                  !draft.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                peripheral.respond(to: first, withResult: .invalidAttributeValueLength)
+                return
+            }
+            let saved = DraftInbox.shared.save(draft)
+            peripheral.respond(to: first, withResult: saved ? .success : .unlikelyError)
+            return
+        }
         for request in requests {
             if request.characteristic.uuid == BLEConstants.quickReplyCharacteristicUUID,
                let data = request.value,
                let payload = String(data: data, encoding: .utf8) {
-                logger.info("Quick reply received: \(payload)")
+                logger.info("Quick reply received")
                 handleQuickReply(payload)
             }
             peripheral.respond(to: request, withResult: .success)
@@ -332,7 +424,20 @@ extension PeripheralManager: CBPeripheralManagerDelegate {
     func peripheralManager(_ peripheral: CBPeripheralManager, willRestoreState dict: [String: Any]) {
         logger.info("Restoring peripheral manager state")
         if let services = dict[CBPeripheralManagerRestoredStateServicesKey] as? [CBMutableService] {
-            serviceAdded = !services.isEmpty
+            if let service = services.first(where: { $0.uuid == BLEConstants.companionServiceUUID }),
+               let characteristics = service.characteristics,
+               characteristics.contains(where: { $0.uuid == BLEConstants.workoutUUID }),
+               characteristics.contains(where: { $0.uuid == BLEConstants.toolsUUID }),
+               characteristics.contains(where: { $0.uuid == BLEConstants.draftUUID }) {
+                companionService = service
+                statusCharacteristic = characteristics.first { $0.uuid == BLEConstants.connectionStatusUUID } as? CBMutableCharacteristic
+                callStateCharacteristic = characteristics.first { $0.uuid == BLEConstants.callStateCharacteristicUUID } as? CBMutableCharacteristic
+                UIDevice.current.isBatteryMonitoringEnabled = true
+                serviceAdded = true
+            } else {
+                services.forEach { peripheral.remove($0) }
+                serviceAdded = false
+            }
         }
         if peripheral.isAdvertising {
             isAdvertising = true
@@ -369,4 +474,21 @@ struct DiscoveredWatch: Identifiable {
 struct PersistedWatch: Codable {
     let id: String // UUID string
     let name: String
+}
+
+struct TimedWorkout: Decodable {
+    let id: UUID
+    let kind: String
+    let start: Double
+    let end: Double
+
+    func sample() -> HKWorkout? {
+        let types: [String: HKWorkoutActivityType] = ["Walk": .walking, "Run": .running, "Cycle": .cycling]
+        guard let type = types[kind], start.isFinite, end.isFinite, end > start, start > 0,
+              end / 1000 <= Date().timeIntervalSince1970 + 300 else { return nil }
+        return HKWorkout(activityType: type, start: Date(timeIntervalSince1970: start / 1000),
+                         end: Date(timeIntervalSince1970: end / 1000), duration: (end - start) / 1000,
+                         totalEnergyBurned: nil, totalDistance: nil,
+                         metadata: [HKMetadataKeySyncIdentifier: "wearbridge." + id.uuidString, HKMetadataKeySyncVersion: 1])
+    }
 }

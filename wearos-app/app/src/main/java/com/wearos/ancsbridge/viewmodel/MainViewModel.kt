@@ -11,6 +11,7 @@ import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.wearos.ancsbridge.ancs.AncsService
+import com.wearos.ancsbridge.ancs.NotificationPreferences
 import com.wearos.ancsbridge.ble.BleConnectionManager
 import com.wearos.ancsbridge.ble.BleScanner
 import com.wearos.ancsbridge.model.ConnectionState
@@ -25,12 +26,46 @@ import kotlinx.coroutines.launch
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val scanner = BleScanner(application)
+    val notificationPreferences = NotificationPreferences(application)
 
     private val _isScanning = MutableStateFlow(false)
     val isScanning: StateFlow<Boolean> = _isScanning.asStateFlow()
 
     // Observe the service's shared connection state directly
     val connectionState: StateFlow<ConnectionState> = AncsService.sharedConnectionState
+
+    fun pairedPhones(): List<Pair<String, String>> {
+        val manager = getApplication<Application>().getSystemService(BluetoothManager::class.java)
+        return manager.adapter?.bondedDevices.orEmpty().filter {
+            it.bluetoothClass?.majorDeviceClass == android.bluetooth.BluetoothClass.Device.Major.PHONE ||
+                it.name.orEmpty().contains("iPhone", ignoreCase = true)
+        }.map { (it.name ?: "Phone") to it.address }.sortedBy { it.first }
+    }
+
+    val supportedCommands = AncsService.supportedMediaCommands
+    val workouts = com.wearos.ancsbridge.ancs.WorkoutLog(application)
+    fun syncWorkouts() {
+        val context = getApplication<Application>()
+        context.startService(Intent(context, AncsService::class.java).setAction("sync_workouts"))
+    }
+    val phoneTools = AncsService.phoneTools
+    val phoneSummary = AncsService.phoneSummary
+    fun phoneControl(code: Int) {
+        val context = getApplication<Application>()
+        context.startService(Intent(context, AncsService::class.java).setAction("phone_control").putExtra("code", code))
+    }
+    val sessionStats = AncsService.sessionStats
+    val nowPlaying = AncsService.nowPlaying
+    val mediaAvailable: StateFlow<Boolean> = AncsService.mediaAvailable
+
+    fun sendMediaCommand(command: Int) {
+        val context = getApplication<Application>()
+        val intent = Intent(context, AncsService::class.java).apply {
+            action = AncsService.ACTION_MEDIA_COMMAND
+            putExtra(AncsService.EXTRA_MEDIA_COMMAND, command)
+        }
+        context.startService(intent)
+    }
 
     private val _scanStatus = MutableStateFlow("")
     val scanStatus: StateFlow<String> = _scanStatus.asStateFlow()
@@ -171,14 +206,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun clearAllNotifications() {
         val context = getApplication<Application>()
-        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        // Cancel all except the foreground service notification (ID 1)
-        nm.activeNotifications.forEach { sbn ->
-            if (sbn.id != 1) { // service notification
-                nm.cancel(sbn.id)
-            }
-        }
-        // Also tell the service to reset its tracking
         val intent = Intent(context, AncsService::class.java).apply {
             action = AncsService.ACTION_CLEAR_ALL
         }
