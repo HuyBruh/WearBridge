@@ -89,4 +89,28 @@ final class AncsBridgeTests: XCTestCase {
         XCTAssertEqual(CallStateObserver.state(of: [outgoing, ended], previous: BLEConstants.callStateRinging),
                        BLEConstants.callStateEnded)
     }
+
+    func testProvisioningProfileExpiryAndHealthKitAreRead() {
+        let xml = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0"><dict>
+        <key>ExpirationDate</key><date>2026-12-05T08:00:00Z</date>
+        <key>TeamName</key><string>Huy Pham</string>
+        <key>Entitlements</key><dict><key>com.apple.developer.healthkit</key><true/></dict>
+        </dict></plist>
+        """
+        var data = Data([0x30, 0x82, 0x01, 0x00, 0xFF])
+        data.append(Data(xml.utf8))
+        data.append(Data([0x00, 0xA0, 0x82]))
+        let profile = SigningInfo.parse(data)
+        XCTAssertEqual(profile?.expires, ISO8601DateFormatter().date(from: "2026-12-05T08:00:00Z"))
+        XCTAssertEqual(profile?.hasHealthKit, true)
+        XCTAssertEqual(profile?.teamName, "Huy Pham")
+    }
+
+    func testArtworkTitleCleanup() {
+        XCTAssertEqual(ArtworkProvider.clean("Song Name (feat. Someone) [Remastered 2011]"), "Song Name")
+        XCTAssertEqual(ArtworkProvider.clean("Anti-Hero - Live"), "Anti-Hero")
+    }
 }

@@ -99,6 +99,8 @@ Crown rotation on the Now Playing screen sends Volume Up/Down.
 - Sleep: `PassiveListenerConfig.setShouldUserActivityInfoBeRequested(true)`; `SleepTracker` turns ASLEEP→other transitions (≥20 min) into sleep intervals and a resting heart rate (mean of the lowest 30% of readings during sleep) → `sleepAnalysis` / `restingHeartRate`.
 - Workouts also record `VO2_MAX`, `GROUND_CONTACT_TIME`, `VERTICAL_OSCILLATION`, `STRIDE_LENGTH` when supported → `vo2Max`, `runningGroundContactTime`, `runningVerticalOscillation`, `runningStrideLength`.
 - Today (`model/PhoneInfo`): Today screen, `TodayTileService`, `WeatherComplicationService`, `NextEventComplicationService`; refreshed on connect, on notify, every 15 min.
+- Breathe (watch, `ui/BreatheScreens.kt`): guided breathing (4 s in with light haptic taps, 6 s out); sessions ≥ 30 s go to the outbox as `mindful` intervals → `HKCategoryType(.mindfulSession)`.
+- Sideload awareness: the iPhone app parses `embedded.mobileprovision` (`SigningInfo`: expiry, HealthKit entitlement), shows it in Settings, schedules reminders a day and 2 h before expiry, and adds `"app":{"expires","health"}` to the Today JSON; the watch shows "iPhone app expires in …" on Home and the Apple Health state ("missing" = signature without HealthKit) on the Health screen.
 - Toggle key on iPhone is still `syncWorkouts` (Settings → Apple Health); when off, the first chunk is refused and the watch keeps the record.
 
 ## Messages over Bluetooth Classic (MAP + PBAP)

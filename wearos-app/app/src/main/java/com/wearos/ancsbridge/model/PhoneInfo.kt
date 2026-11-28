@@ -12,7 +12,18 @@ data class PhoneInfo(
     val events: List<Event> = emptyList(),
     val reminders: List<Reminder> = emptyList(),
     val atMs: Long = 0,
+    /** When the sideloaded iPhone app's signature expires (it stops opening), if known. */
+    val appExpiresMs: Long? = null,
+    /** Apple Health on the iPhone: "on", "off", "missing" (signature without HealthKit) or "". */
+    val health: String = "",
 ) {
+    /** Hours until the iPhone app expires, when that is within [withinHours]. */
+    fun expiresInHours(now: Long = System.currentTimeMillis(), withinHours: Int = 48): Long? {
+        val expires = appExpiresMs ?: return null
+        val hours = (expires - now) / 3_600_000
+        return hours.takeIf { it < withinHours }
+    }
+
     data class Weather(
         val temp: Double, val code: Int, val day: Boolean, val hi: Double?, val lo: Double?,
         val place: String, val atMs: Long, val hourly: List<Triple<Long, Double, Int>>,
@@ -84,7 +95,12 @@ data class PhoneInfo(
                     Reminder(r.optString("id"), r.optString("title"), r.optLong("due").takeIf { it > 0 })
                 }
             }.orEmpty()
-            PhoneInfo(weather, events, reminders, root.optLong("at", System.currentTimeMillis()))
+            val app = root.optJSONObject("app")
+            PhoneInfo(
+                weather, events, reminders, root.optLong("at", System.currentTimeMillis()),
+                appExpiresMs = app?.optLong("expires")?.takeIf { it > 0 },
+                health = app?.optString("health").orEmpty(),
+            )
         }.getOrNull()
 
         /** WMO weather interpretation codes (Open-Meteo). */

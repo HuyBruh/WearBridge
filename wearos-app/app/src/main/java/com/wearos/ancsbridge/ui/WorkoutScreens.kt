@@ -507,7 +507,8 @@ private fun FailedContent(message: String, onDone: () -> Unit) {
 // ---------------------------------------------------------------------------------------
 
 @Composable
-internal fun HealthScreen(viewModel: MainViewModel) {
+internal fun HealthScreen(viewModel: MainViewModel, openBreathe: () -> Unit = {}) {
+    val phone by com.wearos.ancsbridge.model.PhoneInfo.current.collectAsState()
     val pending by viewModel.healthPending.collectAsState()
     val lastSync by viewModel.healthLastSync.collectAsState()
     val syncing by viewModel.healthSyncing.collectAsState()
@@ -534,6 +535,9 @@ internal fun HealthScreen(viewModel: MainViewModel) {
         },
         onSync = viewModel::syncHealthNow,
         now = System.currentTimeMillis(),
+        iPhoneHealth = phone.health,
+        expiresInHours = phone.expiresInHours(withinHours = 24 * 8),
+        onBreathe = openBreathe,
     )
     LaunchedEffect(context) { viewModel.syncHealthNow() }
 }
@@ -548,6 +552,9 @@ internal fun HealthContent(
     onPassive: (Boolean) -> Unit,
     onSync: () -> Unit,
     now: Long,
+    iPhoneHealth: String = "",
+    expiresInHours: Long? = null,
+    onBreathe: () -> Unit = {},
 ) {
     val status = when {
         syncing -> "Sending to iPhone…"
@@ -573,11 +580,37 @@ internal fun HealthContent(
                 modifier = Modifier.fillMaxWidth(),
                 colors = appleSwitchColors(),
                 icon = { androidx.wear.compose.material3.Icon(Icons.Rounded.MonitorHeart, contentDescription = null) },
-                secondaryLabel = { Text("All day, in the background", maxLines = 2) },
-            ) { Text("Heart Rate & Steps", maxLines = 2) }
+                secondaryLabel = { Text("Steps, calories, heart rate, sleep", maxLines = 2) },
+            ) { Text("All-Day Tracking", maxLines = 2) }
+        }
+        // What the iPhone app reports about Apple Health and its own signature.
+        val iPhoneNote = when (iPhoneHealth) {
+            "missing" -> "The iPhone app was installed without HealthKit. Reinstall it with Sideloadly using your Apple ID."
+            "off" -> "Turn on Apple Health in the WearBridge iPhone app (Settings)."
+            else -> null
+        }
+        iPhoneNote?.let {
+            item {
+                Text(it, style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center,
+                    color = Color(0xFFFF9F0A), modifier = Modifier.padding(horizontal = 12.dp))
+            }
+        }
+        expiresInHours?.let { hours ->
+            item {
+                Text(
+                    if (hours <= 0) "iPhone app expired: re-sign it with Sideloadly. Data waits on the watch."
+                    else "iPhone app signature: ${if (hours < 24) "$hours h" else "${hours / 24} days"} left",
+                    style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center,
+                    color = if (hours < 48) Color(0xFFFF9F0A) else Color(0xFF98989F),
+                    modifier = Modifier.padding(horizontal = 12.dp)
+                )
+            }
         }
         item {
             NavButton(Icons.Rounded.Sync, Color(0xFF0A84FF), "Sync Now", null, onSync)
+        }
+        item {
+            NavButton(Icons.Rounded.SelfImprovement, Color(0xFF5AC8FA), "Breathe", "Mindful minutes", onBreathe)
         }
         item {
             Text(

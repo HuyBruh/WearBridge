@@ -58,6 +58,10 @@ final class WatchInfoProvider: NSObject, CLLocationManagerDelegate {
         if UserDefaults.standard.bool(forKey: Self.weatherKey), let weather { root["weather"] = weather }
         if UserDefaults.standard.bool(forKey: Self.agendaKey) { root["events"] = events() }
         if UserDefaults.standard.bool(forKey: Self.remindersKey) { root["reminders"] = reminders }
+        // Lets the watch warn before a sideloaded build expires and show Apple Health status.
+        var app: [String: Any] = ["health": SigningInfo.healthState]
+        if let expires = SigningInfo.expires { app["expires"] = Int(expires.timeIntervalSince1970 * 1000) }
+        root["app"] = app
         let data = (try? JSONSerialization.data(withJSONObject: root)) ?? Data("{}".utf8)
         return data
     }

@@ -17,6 +17,7 @@ struct AncsBridgeApp: App {
                 .task {
                     QuickReplyLauncher.shared.requestAuthorization()
                     await WatchHealthImporter.shared.requestNewTypesIfNeeded()
+                    SigningInfo.scheduleExpiryReminders()
                 }
         }
         .onChange(of: scenePhase) { _, phase in

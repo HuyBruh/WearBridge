@@ -35,6 +35,7 @@ final class WatchHealthImporter: ObservableObject {
         ]
         for id in ids { types.insert(HKQuantityType(id)) }
         types.insert(HKCategoryType(.sleepAnalysis))
+        types.insert(HKCategoryType(.mindfulSession))
         return types
     }
 
@@ -376,6 +377,17 @@ final class WatchHealthImporter: ObservableObject {
                 start: Date(timeIntervalSince1970: Double(startMs) / 1000),
                 end: Date(timeIntervalSince1970: Double(endMs) / 1000), device: Self.device,
                 metadata: [HKMetadataKeySyncIdentifier: "wearbridge.sleep.\(startMs)", HKMetadataKeySyncVersion: 1]))
+        }
+        // Breathe sessions from the watch → Mindful Minutes.
+        for interval in record["mindful"] as? [[NSNumber]] ?? [] where interval.count >= 2 {
+            let startMs = interval[0].int64Value, endMs = interval[1].int64Value
+            guard endMs > startMs else { continue }
+            objects.append(HKCategorySample(
+                type: HKCategoryType(.mindfulSession),
+                value: HKCategoryValue.notApplicable.rawValue,
+                start: Date(timeIntervalSince1970: Double(startMs) / 1000),
+                end: Date(timeIntervalSince1970: Double(endMs) / 1000), device: Self.device,
+                metadata: [HKMetadataKeySyncIdentifier: "wearbridge.mindful.\(startMs)", HKMetadataKeySyncVersion: 1]))
         }
         for point in record["resting"] as? [[NSNumber]] ?? [] where point.count >= 2 {
             let ms = point[0].int64Value

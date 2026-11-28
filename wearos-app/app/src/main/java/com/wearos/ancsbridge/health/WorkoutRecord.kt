@@ -107,6 +107,14 @@ object PassiveRecord {
         listOf("hr", "steps", "distance", "floors", "active", "basal").any { (record.optJSONArray(it)?.length() ?: 0) > 0 }
 
     /** A finished sleep period plus the resting heart rate measured during it. */
+    /** A Breathe session → Mindful Minutes in Apple Health. */
+    fun mindfulJson(interval: Pair<Long, Long>): JSONObject = JSONObject().apply {
+        put("type", "samples")
+        put("v", 1)
+        put("id", UUID.randomUUID().toString())
+        put("mindful", JSONArray().put(JSONArray().put(interval.first).put(interval.second)))
+    }
+
     fun sleepJson(interval: Pair<Long, Long>, restingBpm: Int?): JSONObject = JSONObject().apply {
         put("type", "samples")
         put("v", 1)

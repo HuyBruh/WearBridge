@@ -1,5 +1,7 @@
 package com.wearos.ancsbridge.ui
 
+import androidx.compose.material.icons.rounded.SelfImprovement
+import androidx.compose.material.icons.rounded.Warning
 import com.wearos.ancsbridge.ancs.AncsService
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.blur
@@ -104,6 +106,7 @@ private object Routes {
     const val NOTIFICATIONS = "notifications"
     const val PAIR = "pair"
     const val WORKOUTS = "workouts"
+    const val BREATHE = "breathe"
     const val WORKOUT_LIVE = "workout_live"
     const val WORKOUT_GOAL = "workout_goal"
     const val MESSAGES = "messages"
@@ -165,7 +168,8 @@ fun MainScreen(viewModel: MainViewModel, deepLink: String? = null, onDeepLinkHan
             composable(Routes.WORKOUT_LIVE) {
                 LiveWorkoutScreen(viewModel) { navController.popBackStack(Routes.HOME, inclusive = false) }
             }
-            composable(Routes.HEALTH) { HealthScreen(viewModel) }
+            composable(Routes.HEALTH) { HealthScreen(viewModel) { navController.navigate(Routes.BREATHE) } }
+            composable(Routes.BREATHE) { BreatheScreen(onSaved = viewModel::syncHealthNow) }
             composable(Routes.TODAY) { TodayScreen(viewModel) }
             composable(Routes.MESSAGES) {
                 MessagesScreen(
@@ -299,6 +303,14 @@ internal fun HomeContent(
                     "Syncs to Apple Health") { navigate(Routes.WORKOUTS) }
             }
         }
+        // Like iOS's own "expires soon" — the sideloaded iPhone app stops opening when it does.
+        todayInfo.expiresInHours()?.let { hours ->
+            item {
+                NavButton(Icons.Rounded.Warning, Color(0xFFFF9F0A),
+                    if (hours <= 0) "iPhone app expired" else "iPhone app expires in ${if (hours < 24) "$hours h" else "${hours / 24} d"}",
+                    "Re-sign WearBridge with Sideloadly") { navigate(Routes.HEALTH) }
+            }
+        }
         item { TodaySummaryButton(todayInfo) { navigate(Routes.TODAY) } }
         item {
             NavButton(Icons.AutoMirrored.Rounded.Chat, Color(0xFF34C759), "Messages",
@@ -306,8 +318,17 @@ internal fun HomeContent(
         }
         item {
             NavButton(Icons.Rounded.Favorite, Color(0xFFFF375F), "Apple Health",
-                if (healthPending > 0) "$healthPending waiting to sync" else "Steps, calories, heart rate, sleep") {
+                when {
+                    todayInfo.health == "missing" -> "Needs reinstall on iPhone"
+                    healthPending > 0 -> "$healthPending waiting to sync"
+                    else -> "Steps, calories, heart rate, sleep"
+                }) {
                 navigate(Routes.HEALTH)
+            }
+        }
+        item {
+            NavButton(Icons.Rounded.SelfImprovement, Color(0xFF5AC8FA), "Breathe", "Mindful minutes") {
+                navigate(Routes.BREATHE)
             }
         }
 

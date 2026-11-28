@@ -148,7 +148,13 @@ class ScreensSnapshot {
     }
 
     @Test
-    fun health() = shot { HealthContent(3, 0, false, false, true, {}, {}, 0) }
+    fun health() = shot { HealthContent(3, 0, false, false, true, {}, {}, 0, iPhoneHealth = "on", expiresInHours = 30) }
+
+    @Test
+    fun breathePicker() = shot { BreathePicker {} }
+
+    @Test
+    fun breatheFlower() = shot { androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) { BreatheFlower(0.85f) } }
 
     private val msgs = com.wearos.ancsbridge.messages.MapFormats.parseListing("""
         <msg handle="1" subject="Tối nay đi ăn không?" datetime="20261127T201500" sender_name="Minh" sender_addressing="+84912345678" read="no"/>

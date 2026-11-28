@@ -189,3 +189,24 @@ class WorkoutPeriodsTest {
         org.junit.Assert.assertEquals(10.0, quietBasal.single().third, 0.01)
     }
 }
+
+
+class SideloadAndMindfulTest {
+    @Test
+    fun phoneInfoReadsAppStatus() {
+        val now = 1_000_000_000L
+        val info = com.wearos.ancsbridge.model.PhoneInfo.parse(
+            """{"at":1,"app":{"health":"missing","expires":${now + 5 * 3_600_000L}}}""")!!
+        org.junit.Assert.assertEquals("missing", info.health)
+        org.junit.Assert.assertEquals(5L, info.expiresInHours(now))
+        org.junit.Assert.assertNull(info.expiresInHours(now, withinHours = 4))
+        org.junit.Assert.assertNull(com.wearos.ancsbridge.model.PhoneInfo.parse("""{"at":1}""")!!.expiresInHours(now))
+    }
+
+    @Test
+    fun mindfulRecordShape() {
+        val json = PassiveRecord.mindfulJson(10L to 70_010L)
+        org.junit.Assert.assertEquals("samples", json.getString("type"))
+        org.junit.Assert.assertEquals(70_010L, json.getJSONArray("mindful").getJSONArray(0).getLong(1))
+    }
+}

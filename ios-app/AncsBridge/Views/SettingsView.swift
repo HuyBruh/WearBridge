@@ -29,7 +29,7 @@ struct SettingsView: View {
                         Label {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text("Apple Health").foregroundStyle(.primary)
-                                Text(requestingHealth ? "Requesting access…" : (syncWorkouts ? "Saving watch workouts, heart rate & steps · tap to pause" : "Save watch workouts, heart rate & steps"))
+                                Text(requestingHealth ? "Requesting access…" : (syncWorkouts ? "Saving workouts, steps, calories, heart rate, sleep & mindful minutes · tap to pause" : "Save workouts, steps, calories, heart rate, sleep & mindful minutes"))
                                     .font(.footnote)
                                     .foregroundStyle(.secondary)
                             }
@@ -52,10 +52,27 @@ struct SettingsView: View {
                                 .foregroundStyle(.orange)
                         }
                     }
+                    if let profile = SigningInfo.profile, !profile.hasHealthKit, healthIssue == nil {
+                        Label("This installation's signature has no HealthKit, so Apple Health can't be used. Reinstall with Sideloadly or AltStore using your own Apple ID.",
+                              systemImage: "exclamationmark.triangle")
+                            .font(.footnote)
+                            .foregroundStyle(.orange)
+                    }
                     if let healthIssue {
                         Label(healthIssue, systemImage: "info.circle")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
+                    }
+                }
+                if let expires = SigningInfo.expires {
+                    Section {
+                        LabeledContent("Signature expires", value: expires.formatted(date: .abbreviated, time: .shortened))
+                    } header: {
+                        Text("Installation")
+                    } footer: {
+                        Text(expires.timeIntervalSinceNow < 3 * 86400
+                             ? "Re-sign soon with Sideloadly (free Apple ID: every 7 days). You'll get a reminder a day before, and the watch shows it too. Watch data waits until then."
+                             : "You'll get a reminder a day before it expires; the watch shows it too.")
                     }
                 }
                 Section {
@@ -201,7 +218,7 @@ struct SettingsView: View {
         } catch {
             let failure = error as NSError
             if failure.localizedDescription.localizedCaseInsensitiveContains("entitlement") {
-                healthIssue = "This installation lacks HealthKit in its signature. Reinstall using a provisioning profile with HealthKit enabled for this app."
+                healthIssue = "This installation lacks HealthKit in its signature (common with purchased certificates). Reinstall with Sideloadly or AltStore using your own Apple ID, or a developer account with HealthKit enabled."
             } else {
                 healthIssue = "\(failure.localizedDescription) (\(failure.domain) \(failure.code))"
             }
