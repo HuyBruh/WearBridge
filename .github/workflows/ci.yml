@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   wearos:
-    name: Wear OS (unit tests + debug APK)
+    name: Wear OS (unit tests + release/debug APKs)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:
@@ -34,10 +34,21 @@ jobs:
       - name: Unit tests
         run: ./gradlew testDebugUnitTest
 
-      - name: Build debug APK
-        run: ./gradlew assembleDebug
+      - name: Build release and debug APKs
+        run: ./gradlew assembleRelease assembleDebug
 
-      - name: Upload APK
+      # The one to install: R8-optimised and not debuggable (debug Compose builds are
+      # several times slower on a watch). Both are signed with the committed sideload key,
+      # so every build installs over the previous one.
+      - name: Upload release APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: WearBridge-wearos-release-apk
+          path: wearos-app/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload debug APK
         uses: actions/upload-artifact@v7
         with:
           name: WearBridge-wearos-debug-apk

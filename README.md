@@ -104,7 +104,8 @@ ANCS is a system-level BLE service built into iOS. Any bonded BLE accessory can 
 
 Every push to `main` and every pull request is built by [GitHub Actions](https://github.com/k97/WearBridge/actions/workflows/ci.yml). Open a green run and download from **Artifacts**:
 
-- `WearBridge-wearos-debug-apk`: install with `adb install -r app-debug.apk`
+- `WearBridge-wearos-release-apk`: **install this one** with `adb install -r app-release.apk` (optimised; the debug APK is much slower on a watch)
+- `WearBridge-wearos-debug-apk`: for development with a debugger
 - `WearBridge-ios-unsigned-ipa`: unsigned, so re-sign it with your own Apple ID in a sideloading tool (AltStore, SideStore, Sideloadly)
 
 Artifacts are kept for 14 days.
@@ -115,7 +116,13 @@ Needs JDK 17 and the Android SDK (platform 35).
 
 ```bash
 cd wearos-app
-./gradlew testDebugUnitTest assembleDebug
+./gradlew testDebugUnitTest assembleRelease
+```
+
+Both build types are signed with the committed `app/sideload.keystore` (a public sideloading key), so any build installs over the previous one. After installing, optionally precompile for the smoothest UI:
+
+```bash
+adb shell cmd package compile -m speed-profile -f com.wearos.ancsbridge
 ```
 
 Install on watch via ADB:

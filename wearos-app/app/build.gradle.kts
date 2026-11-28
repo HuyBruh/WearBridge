@@ -18,9 +18,28 @@ android {
         versionName = "1.5"
     }
 
+    // One fixed key for every build (local and CI), so a new APK always installs over the
+    // previous one without uninstalling (which would wipe pairing and health data).
+    // It is a public sideloading key, not a store key.
+    signingConfigs {
+        create("sideload") {
+            storeFile = file("sideload.keystore")
+            storePassword = "android"
+            keyAlias = "wearbridge"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("sideload")
+        }
+        // The build to install: R8-optimised, not debuggable. Compose debug builds run
+        // several times slower on a watch.
         release {
             isMinifyEnabled = true
+            isShrinkResources = true
+            signingConfig = signingConfigs.getByName("sideload")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -63,6 +82,8 @@ dependencies {
 
     // Activity + Lifecycle
     implementation("androidx.activity:activity-compose:1.9.3")
+    // play-services-wearable pulls an old Fragment that breaks ActivityResult (lint fatal)
+    implementation("androidx.fragment:fragment-ktx:1.8.5")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("androidx.lifecycle:lifecycle-service:2.8.7")

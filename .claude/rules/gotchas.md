@@ -56,3 +56,5 @@
 
 28. **Health Services exposes no SpO2/HRV/sleep stages**: sleep comes only as the passive ASLEEP activity state (duration, no stages).
 
+29. **Never ship the debug APK to the watch**: debuggable Compose runs mostly interpreted and was visibly laggy (low FPS). Install `assembleRelease` (R8, baseline profiles, 4 MB vs 71 MB). Every build is signed with `app/sideload.keystore`; CI's per-run debug keys forced an uninstall (losing pairing) on every update.
+
