@@ -110,4 +110,12 @@ class MessagingTest {
         assertEquals(listOf("Lan", "Minh Nguyễn"), contacts.map { it.name })
         assertEquals(listOf("+84 912 345 678"), contacts[1].phones)
     }
+
+    @Test
+    fun `OBEX error codes are readable`() {
+        assertEquals("forbidden", ObexClient.describe(0xC3))
+        assertEquals("0xE0", ObexClient.describe(0xE0))
+        val headers = ObexClient.parseHeaderBytes(ObexClient.Header(ObexClient.HI_BODY, "x".toByteArray()).encode(), 0)
+        assertEquals(ObexClient.HI_BODY, headers.single().id)
+    }
 }

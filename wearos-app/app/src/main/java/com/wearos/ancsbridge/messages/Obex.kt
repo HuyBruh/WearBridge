@@ -33,7 +33,26 @@ class ObexClient(private val input: InputStream, private val output: OutputStrea
         const val HI_CONNECTION_ID = 0xCB
 
         private const val OUR_MAX_PACKET = 0x2000
+
+        /** Parses OBEX headers from [data] starting at [start] (shared with the MNS server). */
+        fun parseHeaderBytes(data: ByteArray, start: Int): List<Header> =
+            ObexClient(java.io.ByteArrayInputStream(ByteArray(0)), java.io.ByteArrayOutputStream()).parseHeaders(data, start)
+
+        fun describe(code: Int): String = when (code) {
+            0xC0 -> "bad request"
+            0xC1 -> "unauthorized"
+            0xC3 -> "forbidden"
+            0xC4 -> "not found"
+            0xC6 -> "not acceptable"
+            0xD0 -> "server error"
+            0xD3 -> "service unavailable"
+            else -> "0x%02X".format(code)
+        }
     }
+
+    /** Response code of the last CONNECT (for diagnostics). */
+    var lastConnectCode: Int = 0
+        private set
 
     /** One OBEX header: id + value (unicode text, byte sequence, 1 or 4 byte number). */
     class Header(val id: Int, val bytes: ByteArray) {
@@ -86,6 +105,7 @@ class ObexClient(private val input: InputStream, private val output: OutputStrea
         output.write(packet)
         output.flush()
         val response = readResponse(connectResponse = true)
+        lastConnectCode = response.code
         if (!response.success) return false
         connectionId = response.header(HI_CONNECTION_ID)
         return true

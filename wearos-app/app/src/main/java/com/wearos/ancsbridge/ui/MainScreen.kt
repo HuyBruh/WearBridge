@@ -129,6 +129,7 @@ fun MainScreen(viewModel: MainViewModel, deepLink: String? = null, onDeepLinkHan
             link == MainActivity.OPEN_LIVE_WORKOUT && workoutRunning -> navController.navigate(Routes.WORKOUT_LIVE)
             link == MainActivity.OPEN_ACTIVITY -> navController.navigate(Routes.ACTIVITY)
             link == MainActivity.OPEN_TODAY -> navController.navigate(Routes.TODAY)
+            link == MainActivity.OPEN_NOW_PLAYING -> navController.navigate(Routes.NOW_PLAYING)
             link.startsWith(MainActivity.OPEN_WORKOUT_PREFIX) -> {
                 if (workoutRunning) navController.navigate(Routes.WORKOUT_LIVE)
                 else runCatching {

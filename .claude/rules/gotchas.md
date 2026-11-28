@@ -60,3 +60,7 @@
 
 30. **Sideloaded iOS app lost HealthKit**: CI builds with `CODE_SIGNING_ALLOWED=NO`, so the binary carried no entitlements and Sideloadly/AltStore re-signed it without HealthKit ("This installation lacks HealthKit in its signature"). CI now ad-hoc signs the .app with `AncsBridge.entitlements` before zipping the IPA, and checks the entitlement is present.
 
+31. **iOS refused MAP with no toggle in Bluetooth settings**: iOS shows "Show Notifications"/"Sync Contacts" only for devices whose SDP lists MAP MNS / PBAP PCE, and reads SDP at pairing. `MapServerRecords` publishes both; re-pair after installing.
+
+32. **No text replies for third-party apps on iPhone**: ANCS exposes only positive/negative actions; no API lets an accessory or companion app answer Messenger/WhatsApp/Zalo. Only iMessage/SMS can be sent (MAP); others fall back to an iPhone draft (copy + open app).
+

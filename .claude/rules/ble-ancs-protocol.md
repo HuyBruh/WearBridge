@@ -71,6 +71,8 @@ When a call is answered on the iPhone, the watch overlay transitions from "Incom
 
 Crown rotation on the Now Playing screen sends Volume Up/Down.
 
+`media/PhoneMediaSession` mirrors AMS into a local `MediaSessionCompat` (metadata, playing/paused, remote `VolumeProviderCompat` → AMS volume) with a MediaStyle notification and an Ongoing Activity chip while playing, so Wear OS shows its media controls without opening the app.
+
 ## Companion Service Characteristics
 
 | Characteristic | UUID | Role |
@@ -106,6 +108,7 @@ iOS supports MAP 1.4 (reply, compose, browse inbox) and PBAP for car kits. The w
 - `messages/ObexClient`: OBEX CONNECT / SETPATH / GET / PUT over `createRfcommSocketToServiceRecord` (MAS `0x1132`, PSE `0x112F`); targets MAS `bb582b40-…`, PBAP `796135f0-…`.
 - `messages/PhoneMessaging`: SETPATH root → telecom → msg; `GetMessagesListing` on inbox/sent (subject ≤255 chars); `PushMessage` to outbox with Charset=UTF-8 (iOS sends via Messages, iMessage or SMS); `GetMessage` for full text; PBAP pull `telecom/pb.vcf` (vCard 2.1, FN/N/TEL/EMAIL).
 - Replying to a Messages alert: the ANCS title (contact name) is matched against inbox `sender_name` to find the address; falls back to PBAP contacts. Missed-call alerts get a Message action too.
+- `messages/MapServerRecords` publishes MNS (`0x1133`, with a minimal OBEX server for event reports → refresh) and PCE (`0x112E`) RFCOMM service records like a car kit; iOS reads them at pairing time, so the watch must be (re-)paired after they exist. Setup re-pairs via hidden `removeBond` when possible. OBEX refusals show the response code.
 - iPhone side: user must enable **Show Notifications** (MAP) and **Sync Contacts** (PBAP) for the watch in Settings › Bluetooth › ⓘ.
 - Watch UI: Messages (conversations, thread bubbles, reply with quick replies or system dictation/keyboard/emoji via `RemoteInputIntentHelper`, compose to contacts), Setup screen.
 
@@ -116,6 +119,7 @@ iOS supports MAP 1.4 (reply, compose, browse inbox) and PBAP for car kits. The w
 3. iOS only opens URLs from the foreground: with the app in the background (the usual case), the reply becomes a local notification and tapping it runs the shortcut
 4. User creates iOS Shortcut "WearBridge Reply" to send SMS/iMessage with the input text
 5. The reply list edited in the iOS app is read on every connection (A0E3D5B9) and cached on the watch
+7. Chat apps (Messenger, WhatsApp, Zalo, Telegram…) get a Reply too: iOS offers accessories no text reply for them, so the reply becomes an iPhone draft with `app`; tapping its notification copies the text and opens the app (URL scheme)
 6. Message notifications from Messages get a "Reply" action with those replies as chips (plus voice/keyboard); the text is saved as a draft on the iPhone, which posts a "Reply to …" notification that opens the Messages composer
 
 ## iPhone Companion App Watch Detection

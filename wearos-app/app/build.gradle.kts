@@ -97,6 +97,8 @@ dependencies {
     implementation("androidx.health:health-services-client:1.1.0")
     implementation("androidx.wear:wear-ongoing:1.1.0")
     implementation("androidx.wear:wear-input:1.2.0")
+    // MediaSession: iPhone playback appears in Wear OS media controls automatically
+    implementation("androidx.media:media:1.7.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-guava:1.9.0")
 
     // Tiles & complications (Activity rings, Workout shortcuts, iPhone battery)

@@ -11,6 +11,15 @@ final class AncsBridgeTests: XCTestCase {
         XCTAssertEqual(draft.body, "Đến rồi 👍")
     }
 
+    func testChatAppDraftsOpenTheRightApp() throws {
+        let json = #"{"id":"12345678-1234-1234-1234-123456789012","sender":"Minh","body":"Ok","app":"com.facebook.Messenger"}"#
+        let draft = try JSONDecoder().decode(WatchDraft.self, from: Data(json.utf8))
+        XCTAssertEqual(draft.chatApp?.name, "Messenger")
+        XCTAssertEqual(draft.chatApp?.url.scheme, "fb-messenger")
+        let sms = try JSONDecoder().decode(WatchDraft.self, from: Data(#"{"id":"12345678-1234-1234-1234-123456789012","sender":"A","body":"B"}"#.utf8))
+        XCTAssertNil(sms.chatApp)
+    }
+
     func testWatchWorkoutActivitiesMapToHealthKit() {
         XCTAssertEqual(WatchHealthImporter.activityType("running"), .running)
         XCTAssertEqual(WatchHealthImporter.activityType("traditionalStrengthTraining"), .traditionalStrengthTraining)

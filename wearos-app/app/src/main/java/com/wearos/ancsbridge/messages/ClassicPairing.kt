@@ -38,6 +38,7 @@ class ClassicPairing(private val context: Context) {
     val state: StateFlow<State> = _state.asStateFlow()
     private var pairingAddress: String? = null
     private var registered = false
+    private var rebonding = false
 
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(c: Context, intent: Intent) {
@@ -67,7 +68,16 @@ class ClassicPairing(private val context: Context) {
                             PhoneMessaging.choose(context, device)
                             _state.value = State.Paired(device.name ?: "iPhone")
                         }
-                        BluetoothDevice.BOND_NONE -> _state.value = State.Failed("Pairing was cancelled")
+                        BluetoothDevice.BOND_NONE -> {
+                            if (rebonding) {
+                                // Old bond removed: pair again so iOS sees the new service records.
+                                rebonding = false
+                                _state.value = if (device.createBond()) State.Pairing(device.name ?: "iPhone")
+                                else State.Failed("Couldn't start pairing")
+                            } else {
+                                _state.value = State.Failed("Pairing was cancelled")
+                            }
+                        }
                     }
                 }
             }
@@ -75,6 +85,8 @@ class ClassicPairing(private val context: Context) {
     }
 
     fun start() {
+        // iOS reads the watch's service records while pairing: publish them first.
+        MapServerRecords.start(context)
         if (!registered) {
             context.registerReceiver(receiver, IntentFilter().apply {
                 addAction(BluetoothDevice.ACTION_FOUND)
@@ -95,8 +107,17 @@ class ClassicPairing(private val context: Context) {
         val device = found.device
         pairingAddress = device.address
         if (device.bondState == BluetoothDevice.BOND_BONDED) {
-            PhoneMessaging.choose(context, device)
-            _state.value = State.Paired(found.name)
+            // Re-pair: the iPhone only reads our MAP/PBAP records when it pairs, and it may
+            // have forgotten this watch. removeBond is hidden API; if it is blocked, keep the
+            // existing bond and let the user remove it in watch Bluetooth settings.
+            val removed = runCatching { device.javaClass.getMethod("removeBond").invoke(device) as Boolean }.getOrDefault(false)
+            if (removed) {
+                rebonding = true
+                _state.value = State.Pairing(found.name)
+            } else {
+                PhoneMessaging.choose(context, device)
+                _state.value = State.Paired(found.name)
+            }
             return
         }
         _state.value = if (device.createBond()) State.Pairing(found.name)

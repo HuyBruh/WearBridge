@@ -124,7 +124,15 @@ object PhoneMessaging {
         val device = device(context) ?: throw IllegalStateException("Messages are not set up")
         adapter(context)?.cancelDiscovery()
         val socket = device.createRfcommSocketToServiceRecord(uuid)
-        socket.connect()
+        try {
+            socket.connect()
+        } catch (e: java.io.IOException) {
+            runCatching { socket.close() }
+            throw java.io.IOException(
+                if (uuid == MAS_UUID) "Can't reach iPhone messages over Bluetooth. Keep the iPhone nearby and unlocked."
+                else "Can't reach iPhone contacts over Bluetooth.", e
+            )
+        }
         return socket
     }
 
@@ -139,8 +147,10 @@ object PhoneMessaging {
             try {
                 val obex = ObexClient(socket.inputStream, socket.outputStream)
                 check(obex.connect(target)) {
-                    if (uuid == MAS_UUID) "iPhone refused messages: turn on Show Notifications for this watch"
-                    else "iPhone refused contacts: turn on Sync Contacts for this watch"
+                    val code = ObexClient.describe(obex.lastConnectCode)
+                    if (uuid == MAS_UUID) "iPhone refused messages ($code). On iPhone: Bluetooth › ⓘ › Show Notifications. " +
+                        "Not there? Forget this watch on iPhone and run Set Up again."
+                    else "iPhone refused contacts ($code). On iPhone: Bluetooth › ⓘ › Sync Contacts."
                 }
                 try { block(obex) } finally { obex.disconnect() }
             } finally {

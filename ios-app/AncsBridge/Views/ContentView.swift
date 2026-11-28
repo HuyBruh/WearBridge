@@ -1,10 +1,45 @@
 import SwiftUI
+import UIKit
 import MessageUI
 
 struct WatchDraft: Codable, Identifiable {
     let id: UUID
     let sender: String
     let body: String
+    /// Bundle ID of the app the alert came from (nil or Messages → Messages composer).
+    var app: String? = nil
+
+    /// Third-party chat apps can't be sent to from here: open them with the text copied.
+    var chatApp: (name: String, url: URL)? {
+        guard let app, app.lowercased() != "com.apple.mobilesms" else { return nil }
+        let known: [String: (String, String)] = [
+            "com.facebook.messenger": ("Messenger", "fb-messenger://"),
+            "net.whatsapp.whatsapp": ("WhatsApp", "whatsapp://"),
+            "net.whatsapp.whatsappsmb": ("WhatsApp Business", "whatsapp://"),
+            "vn.com.vng.zingalo": ("Zalo", "zalo://"),
+            "org.telegram.telegram": ("Telegram", "tg://"),
+            "ph.telegra.telegraph": ("Telegram", "tg://"),
+            "org.whispersystems.signal": ("Signal", "sgnl://"),
+            "com.burbn.instagram": ("Instagram", "instagram://direct-inbox"),
+            "jp.naver.line": ("LINE", "line://"),
+            "com.viber": ("Viber", "viber://"),
+            "com.hammerandchisel.discord": ("Discord", "discord://"),
+            "com.tinyspeck.chatlyio": ("Slack", "slack://open"),
+            "com.slack.slack": ("Slack", "slack://open"),
+            "com.microsoft.skype.teams": ("Teams", "msteams://"),
+            "com.kakao.talk": ("KakaoTalk", "kakaotalk://"),
+            "com.tencent.xin": ("WeChat", "weixin://"),
+        ]
+        guard let entry = known[app.lowercased()], let url = URL(string: entry.1) else { return nil }
+        return (entry.0, url)
+    }
+
+    /// Copies the reply and opens the chat app. Main thread.
+    func openInChatApp(completion: @escaping (Bool) -> Void) {
+        guard let target = chatApp else { completion(false); return }
+        UIPasteboard.general.string = body
+        UIApplication.shared.open(target.url) { completion($0) }
+    }
 }
 
 // Both the peripheral delegate and the views use the main queue.
@@ -60,13 +95,18 @@ struct ContentView: View {
                     }
                     ForEach(inbox.drafts) { draft in
                         Button {
-                            if MFMessageComposeViewController.canSendText() { composing = draft }
+                            if let chat = draft.chatApp {
+                                draft.openInChatApp { opened in
+                                    if opened { remove(draft.id) }
+                                    else { issue = "\(chat.name) isn't installed. The reply is copied." }
+                                }
+                            } else if MFMessageComposeViewController.canSendText() { composing = draft }
                             else { issue = "Messages is unavailable on this iPhone." }
                         } label: {
                             VStack(alignment: .leading) {
-                                Text(draft.sender.isEmpty ? "Messages" : draft.sender).font(.headline)
+                                Text(draft.sender.isEmpty ? (draft.chatApp?.name ?? "Messages") : draft.sender).font(.headline)
                                 Text(draft.body)
-                                Text("Choose recipient and send").font(.caption)
+                                Text(draft.chatApp.map { "Copy and open \($0.name)" } ?? "Choose recipient and send").font(.caption)
                             }
                         }
                         .swipeActions { Button("Delete", role: .destructive) { remove(draft.id) } }
@@ -86,7 +126,12 @@ struct ContentView: View {
             guard let id else { return }
             inbox.pendingOpen = nil
             guard let draft = inbox.drafts.first(where: { $0.id == id }) else { return }
-            if MFMessageComposeViewController.canSendText() { composing = draft }
+            if let chat = draft.chatApp {
+                draft.openInChatApp { opened in
+                    if opened { remove(draft.id) }
+                    else { issue = "\(chat.name) isn't installed. The reply is copied, paste it anywhere." }
+                }
+            } else if MFMessageComposeViewController.canSendText() { composing = draft }
             else { issue = "Messages is unavailable on this iPhone." }
         }
         .alert("Watch drafts", isPresented: Binding(get: { issue != nil }, set: { if !$0 { issue = nil } })) {

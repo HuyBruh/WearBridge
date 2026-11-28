@@ -459,7 +459,7 @@ internal fun MessagesSetupContent(
             }
             else -> item {
                 Text(
-                    "1. On iPhone, open Settings › Bluetooth and stay on that screen.\n2. Pick your iPhone below.",
+                    "1. If this watch was paired before: on iPhone, Settings › Bluetooth › ⓘ › Forget This Device.\n2. Stay on Settings › Bluetooth.\n3. Pick your iPhone below and confirm the code.",
                     style = MaterialTheme.typography.bodySmall, color = Color(0xFF98989F),
                     modifier = Modifier.padding(horizontal = 12.dp)
                 )

@@ -70,6 +70,15 @@ class AncsService : Service() {
         const val ACTION_SYNC_HEALTH = "com.wearos.ancsbridge.SYNC_HEALTH"
         const val ACTION_COMPLETE_REMINDER = "com.wearos.ancsbridge.COMPLETE_REMINDER"
         const val ACTION_REFRESH_INFO = "com.wearos.ancsbridge.REFRESH_INFO"
+
+        /** Chat apps whose alerts get a Reply (via the iPhone, see postNotification). */
+        private val CHAT_APPS = setOf(
+            "com.facebook.messenger", "net.whatsapp.whatsapp", "net.whatsapp.whatsappsmb",
+            "vn.com.vng.zingalo", "org.telegram.telegram", "ph.telegra.telegraph",
+            "org.whispersystems.signal", "com.burbn.instagram", "jp.naver.line",
+            "com.viber", "com.hammerandchisel.discord", "com.tinyspeck.chatlyio", "com.slack.slack",
+            "com.skype.skype", "com.microsoft.skype.teams", "com.kakao.talk", "com.tencent.xin",
+        )
         /** Apple Health sync status for the UI: true while records are being sent. */
         val healthSyncing = MutableStateFlow(false)
         val healthAvailable = MutableStateFlow(false)
@@ -109,6 +118,7 @@ class AncsService : Service() {
 
     private var activeCallUid: Long = -1
     private var phoneRefreshJob: Job? = null
+    private var mediaSession: com.wearos.ancsbridge.media.PhoneMediaSession? = null
 
     // UIDs that belong to the current ANCS session: only these may send actions to iOS.
     // Alerts from an earlier session stay visible (like Apple Watch) but become read-only.
@@ -200,8 +210,24 @@ class AncsService : Service() {
             connectionManager.mediaAvailable.collect { _mediaAvailable.value = it }
         }
 
+        // MAP/PBAP client records (MNS, PCE) so iOS offers Show Notifications / Sync Contacts.
+        com.wearos.ancsbridge.messages.MapServerRecords.onEvent = {
+            scope.launch { refreshMessagesSoon() }
+        }
+        com.wearos.ancsbridge.messages.MapServerRecords.start(this)
+
+        // iPhone playback → local MediaSession, so Wear OS shows media controls by itself.
+        mediaSession = com.wearos.ancsbridge.media.PhoneMediaSession(this) { command ->
+            scope.launch { connectionManager.sendMediaCommand(command.code.toByte()) }
+        }
         scope.launch {
-            connectionManager.nowPlaying.collect { _nowPlaying.value = it }
+            kotlinx.coroutines.flow.combine(
+                connectionManager.nowPlaying, connectionManager.mediaAvailable, connectionManager.supportedCommands
+            ) { playing, available, commands -> Triple(playing, available, commands) }
+                .collect { (playing, available, commands) ->
+                    _nowPlaying.value = playing
+                    mediaSession?.update(playing, available, commands)
+                }
         }
 
         // Update service notification and shared state based on connection state
@@ -312,7 +338,9 @@ class AncsService : Service() {
                 val uid = intent.getLongExtra("uid", -1)
                 val sender = intent.getStringExtra("sender").orEmpty()
                 val alertText = intent.getStringExtra("text").orEmpty()
-                if (!text.isNullOrEmpty() && com.wearos.ancsbridge.messages.PhoneMessaging.isSetUp(this)) {
+                val app = intent.getStringExtra("app").orEmpty()
+                val viaMap = app.isEmpty() || app.equals("com.apple.MobileSMS", true) || app.equals("com.apple.mobilephone", true)
+                if (!text.isNullOrEmpty() && viaMap && com.wearos.ancsbridge.messages.PhoneMessaging.isSetUp(this)) {
                     // Send for real through the iPhone's Messages app (Bluetooth MAP).
                     scope.launch {
                         val sent = com.wearos.ancsbridge.messages.PhoneMessaging.replyToAlert(this@AncsService, sender, alertText, text)
@@ -329,10 +357,16 @@ class AncsService : Service() {
                 } else if (!text.isNullOrEmpty() && uid in actionableUids && intent.getStringExtra("session") == sessionToken) {
                     val payload = org.json.JSONObject().put("id", java.util.UUID.randomUUID().toString())
                         .put("sender", intent.getStringExtra("sender").orEmpty()).put("body", text)
+                        .apply { if (app.isNotEmpty()) put("app", app) }
                         .toString().encodeToByteArray()
                     scope.launch {
                         val saved = connectionManager.saveDraft(payload)
-                        val message = if (saved) "Draft saved. Open Drafts on iPhone to send." else "Draft unconfirmed. Check iPhone Drafts, connection and text length."
+                        val message = when {
+                            !saved -> "Not delivered. Open WearBridge on iPhone and try again."
+                            viaMap -> "Saved on iPhone. Tap the notification there to send."
+                            else -> "On iPhone: tap the notification, then paste and send."
+                        }
+                        if (saved) replyHaptic()
                         android.widget.Toast.makeText(this@AncsService, message, android.widget.Toast.LENGTH_LONG).show()
                     }
                 }
@@ -376,6 +410,8 @@ class AncsService : Service() {
             unregisterReceiver(bluetoothStateReceiver)
         } catch (_: IllegalArgumentException) { }
         connectionManager.destroy()
+        mediaSession?.release()
+        com.wearos.ancsbridge.messages.MapServerRecords.stop()
         _mediaAvailable.value = false
         _nowPlaying.value = NowPlaying()
         wakeProcessor.close()
@@ -396,6 +432,7 @@ class AncsService : Service() {
                     connectionManager.onBluetoothOff()
                 }
                 BluetoothAdapter.STATE_ON -> {
+                    com.wearos.ancsbridge.messages.MapServerRecords.start(this@AncsService)
                     Log.i(TAG, "Bluetooth on: reconnecting")
                     connectionManager.onBluetoothOn()
                 }
@@ -768,14 +805,21 @@ class AncsService : Service() {
         val isMessages = notification.appIdentifier.equals("com.apple.MobileSMS", true)
         val mapReady = com.wearos.ancsbridge.messages.PhoneMessaging.isSetUp(this)
         if (isMessages && mapReady) refreshMessagesSoon()
+        // iOS gives accessories no text reply for third-party apps (ANCS has only two
+        // buttons). Messenger, WhatsApp, Zalo… replies go to the iPhone, which opens the app
+        // with the text on the clipboard after one tap.
+        val isChatApp = notification.appIdentifier.lowercase() in CHAT_APPS ||
+            (notification.categoryId == AncsConstants.CATEGORY_SOCIAL && !isMessages)
         val canReply = (isMessages && (connectionManager.canDraft || mapReady)) ||
-            (notification.categoryId == AncsConstants.CATEGORY_MISSED_CALL && mapReady)
+            (notification.categoryId == AncsConstants.CATEGORY_MISSED_CALL && mapReady) ||
+            (isChatApp && connectionManager.canDraft)
         if (showPreviews && canReply) {
             val draftIntent = Intent(this, AncsService::class.java).apply {
                 action = ACTION_DRAFT
                 putExtra("uid", notification.uid)
                 putExtra("sender", notification.title)
                 putExtra("text", notification.message)
+                putExtra("app", notification.appIdentifier)
                 putExtra("session", sessionToken)
             }
             // Reply chips from the iPhone app's list, plus voice/keyboard, like Apple Watch.

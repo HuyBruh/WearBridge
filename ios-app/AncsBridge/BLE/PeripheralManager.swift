@@ -436,8 +436,9 @@ extension PeripheralManager: CBPeripheralManagerDelegate {
             if saved {
                 // One tap from the lock screen opens the composer with the reply filled in.
                 let content = UNMutableNotificationContent()
-                content.title = draft.sender.isEmpty ? "Reply from your watch" : "Reply to \(draft.sender)"
-                content.body = draft.body
+                let place = draft.chatApp.map { " in \($0.name)" } ?? ""
+                content.title = draft.sender.isEmpty ? "Reply from your watch\(place)" : "Reply to \(draft.sender)\(place)"
+                content.body = draft.chatApp == nil ? draft.body : "\(draft.body)\nTap to copy, then paste and send."
                 content.sound = .default
                 content.userInfo = ["draftID": draft.id.uuidString]
                 UNUserNotificationCenter.current().add(UNNotificationRequest(
