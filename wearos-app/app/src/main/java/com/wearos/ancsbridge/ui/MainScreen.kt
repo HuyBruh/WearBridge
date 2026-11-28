@@ -1,8 +1,11 @@
 package com.wearos.ancsbridge.ui
 
 import android.annotation.SuppressLint
-import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,582 +18,681 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.VolumeDown
+import androidx.compose.material.icons.automirrored.rounded.VolumeUp
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Bluetooth
+import androidx.compose.material.icons.rounded.ClearAll
+import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.LinkOff
+import androidx.compose.material.icons.rounded.MusicNote
+import androidx.compose.material.icons.rounded.Notifications
+import androidx.compose.material.icons.rounded.NotificationsActive
+import androidx.compose.material.icons.rounded.Pause
+import androidx.compose.material.icons.rounded.PhoneIphone
+import androidx.compose.material.icons.rounded.PhotoCamera
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.SkipNext
+import androidx.compose.material.icons.rounded.SkipPrevious
+import androidx.compose.material.icons.rounded.Sync
+import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.rotary.onRotaryScrollEvent
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalInspectionMode
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
+import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
+import androidx.wear.compose.material3.AppScaffold
 import androidx.wear.compose.material3.Button
 import androidx.wear.compose.material3.ButtonDefaults
 import androidx.wear.compose.material3.CircularProgressIndicator
-import androidx.wear.compose.material3.ListHeader
-import androidx.wear.compose.material3.Text
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.CheckCircle
-import androidx.compose.material.icons.rounded.PhoneIphone
-import androidx.compose.material.icons.rounded.Add
-import androidx.compose.material.icons.rounded.Close
+import androidx.wear.compose.material3.FilledIconButton
 import androidx.wear.compose.material3.Icon
+import androidx.wear.compose.material3.IconButton
+import androidx.wear.compose.material3.IconButtonDefaults
+import androidx.wear.compose.material3.ListHeader
+import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.ScreenScaffold
+import androidx.wear.compose.material3.SwitchButton
+import androidx.wear.compose.material3.SwitchButtonDefaults
+import androidx.wear.compose.material3.Text
+import androidx.wear.compose.material3.TimeText
+import androidx.wear.compose.navigation.SwipeDismissableNavHost
+import androidx.wear.compose.navigation.composable
+import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
+import com.wearos.ancsbridge.ancs.AppIconMapper
 import com.wearos.ancsbridge.ble.MediaCommand
+import com.wearos.ancsbridge.ble.NowPlaying
 import com.wearos.ancsbridge.model.ConnectionState
+import com.wearos.ancsbridge.ui.theme.WearBridgeColors
 import com.wearos.ancsbridge.viewmodel.MainViewModel
+import kotlin.math.abs
 
-@SuppressLint("MissingPermission")
+private object Routes {
+    const val HOME = "home"
+    const val NOW_PLAYING = "now_playing"
+    const val IPHONE = "iphone"
+    const val NOTIFICATIONS = "notifications"
+    const val PAIR = "pair"
+}
+
+/** Root: system time on top, swipe right to go back on every screen (native Wear OS). */
 @Composable
 fun MainScreen(viewModel: MainViewModel) {
-    var showPairScreen by remember { mutableStateOf(false) }
-    var showNotificationSettings by remember { mutableStateOf(false) }
-
-    var showWorkout by remember { mutableStateOf(false) }
-    if (showWorkout) {
-        WorkoutScreen(viewModel) { showWorkout = false }
-    } else if (showNotificationSettings) {
-        NotificationSettingsScreen(viewModel) { showNotificationSettings = false }
-    } else if (showPairScreen) {
-        PairNewDeviceScreen(
-            viewModel = viewModel,
-            onDismiss = { showPairScreen = false }
-        )
-    } else {
-        HomeScreen(
-            viewModel = viewModel,
-            onWorkout = { showWorkout = true },
-            onPairNewDevice = { showPairScreen = true },
-            onNotificationSettings = { showNotificationSettings = true }
-        )
+    val navController = rememberSwipeDismissableNavController()
+    AppScaffold(timeText = { TimeText() }) {
+        SwipeDismissableNavHost(navController = navController, startDestination = Routes.HOME) {
+            composable(Routes.HOME) { HomeScreen(viewModel) { navController.navigate(it) } }
+            composable(Routes.NOW_PLAYING) { NowPlayingScreen(viewModel) }
+            composable(Routes.IPHONE) { PhoneToolsScreen(viewModel) }
+            composable(Routes.NOTIFICATIONS) { NotificationSettingsScreen(viewModel) }
+            composable(Routes.PAIR) { PairScreen(viewModel) { navController.popBackStack() } }
+        }
     }
 }
 
-@SuppressLint("MissingPermission")
+/** Items of a [ListScreen]; a plain list so previews can lay them out without lazy layout. */
+internal class WearListBuilder {
+    val items = mutableListOf<Pair<Any?, @Composable () -> Unit>>()
+    fun item(key: Any? = null, content: @Composable () -> Unit) {
+        items += key to content
+    }
+}
+
+/** A scrolling screen with curved scroll indicator and fisheye scaling, like system apps. */
 @Composable
-fun HomeScreen(
-    viewModel: MainViewModel,
-    onWorkout: () -> Unit,
-    onPairNewDevice: () -> Unit,
-    onNotificationSettings: () -> Unit
-) {
-    val connectionState by viewModel.connectionState.collectAsState()
-    val nowPlaying by viewModel.nowPlaying.collectAsState()
-    val phoneTools by viewModel.phoneTools.collectAsState()
-    val phoneSummary by viewModel.phoneSummary.collectAsState()
-    val supportedCommands by viewModel.supportedCommands.collectAsState()
-    val mediaAvailable by viewModel.mediaAvailable.collectAsState()
-    var panel by remember { mutableStateOf<String?>(null) }
-    BackHandler(enabled = panel != null) { panel = null }
-
-    if (panel != null && connectionState is ConnectionState.Connected) {
-        ScalingLazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-                if (panel == "iPhone" && phoneTools) {
-                    item { ListHeader { Text("iPhone tools") } }
-                    if (phoneSummary.isNotEmpty()) item {
-                        Text(phoneSummary, modifier = Modifier.padding(horizontal = 16.dp), textAlign = TextAlign.Center)
-                    }
-                    listOf("Battery & agenda", "Ping iPhone", "Camera shutter").forEachIndexed { code, label ->
-                        item { Button(onClick = { viewModel.phoneControl(code) }, modifier = Modifier.fillMaxWidth(0.9f)) { Text(label) } }
-                    }
-                }
-
-                if (panel == "Now playing" && mediaAvailable) {
-                    item { ListHeader { Text("Now playing") } }
-                    if (nowPlaying.title.isNotBlank() || nowPlaying.artist.isNotBlank()) {
-                        item {
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier.padding(horizontal = 16.dp)
-                            ) {
-                                Text(nowPlaying.title, fontSize = 14.sp, maxLines = 2, textAlign = TextAlign.Center)
-                                if (nowPlaying.artist.isNotBlank()) {
-                                    Text(nowPlaying.artist, fontSize = 11.sp, maxLines = 1, textAlign = TextAlign.Center)
-                                }
-                            }
-                        }
-                    }
-                    MediaCommand.available(supportedCommands).forEach { command ->
-                        item {
-                            Button(
-                                onClick = { viewModel.sendMediaCommand(command.code) },
-                                modifier = Modifier.fillMaxWidth(0.9f)
-                            ) {
-                                Text(command.label, fontSize = 12.sp)
-                            }
-                        }
-                    }
-                }
-
-
-            item { DashboardButton("Back", null) { panel = null } }
+private fun ListScreen(build: WearListBuilder.() -> Unit) {
+    val items = WearListBuilder().apply(build).items
+    if (LocalInspectionMode.current) {
+        // Previews/screenshot tests never run ScalingLazyColumn's first layout pass
+        // (it renders empty there), so lay the same items out in a plain Column.
+        ScreenScaffold {
+            Column(
+                modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp, vertical = 8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) { items.forEach { (_, content) -> content() } }
         }
         return
     }
-
-    ScalingLazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        item {
-            ListHeader {
-                Text("WearBridge")
-            }
+    val listState = rememberScalingLazyListState()
+    ScreenScaffold(scrollState = listState) {
+        ScalingLazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            items.forEach { (key, content) -> item(key = key) { content() } }
         }
+    }
+}
 
-        when (connectionState) {
+// ---------------------------------------------------------------------------------------
+// Home
+// ---------------------------------------------------------------------------------------
+
+@SuppressLint("MissingPermission")
+@Composable
+private fun HomeScreen(viewModel: MainViewModel, navigate: (String) -> Unit) {
+    val state by viewModel.connectionState.collectAsState()
+    val nowPlaying by viewModel.nowPlaying.collectAsState()
+    val mediaAvailable by viewModel.mediaAvailable.collectAsState()
+    val phoneTools by viewModel.phoneTools.collectAsState()
+    val hasBonded = remember(state) { viewModel.hasBondedIPhone() }
+    HomeContent(
+        state = state, hasBonded = hasBonded, nowPlaying = nowPlaying,
+        mediaAvailable = mediaAvailable, phoneTools = phoneTools, navigate = navigate,
+        onClearAll = viewModel::clearAllNotifications, onDisconnect = viewModel::disconnect,
+        onReconnect = viewModel::startService
+    )
+}
+
+@Composable
+internal fun HomeContent(
+    state: ConnectionState,
+    hasBonded: Boolean,
+    nowPlaying: NowPlaying,
+    mediaAvailable: Boolean,
+    phoneTools: Boolean,
+    navigate: (String) -> Unit,
+    onClearAll: () -> Unit,
+    onDisconnect: () -> Unit,
+    onReconnect: () -> Unit,
+) {
+    ListScreen {
+        item { StatusHeader(state, hasBonded) }
+
+        when (state) {
             is ConnectionState.Connected -> {
-                val deviceName = (connectionState as ConnectionState.Connected).deviceName ?: "iPhone"
-
-                item {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(0.9f).padding(vertical = 6.dp),
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(Icons.Rounded.CheckCircle, contentDescription = null,
-                            tint = Color(0xFF34D399), modifier = Modifier.size(20.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Column {
-                            Text(deviceName, fontSize = 15.sp, maxLines = 1)
-                            Text("Connected", color = Color(0xFF34D399), fontSize = 11.sp)
+                if (mediaAvailable) item {
+                    NavButton(
+                        icon = Icons.Rounded.MusicNote,
+                        tint = WearBridgeColors.Music,
+                        label = "Now Playing",
+                        secondary = when {
+                            nowPlaying.hasTrack -> listOf(nowPlaying.title, nowPlaying.artist)
+                                .filter { it.isNotBlank() }.joinToString(" · ")
+                            nowPlaying.player.isNotBlank() -> nowPlaying.player
+                            else -> "Control music on iPhone"
                         }
+                    ) { navigate(Routes.NOW_PLAYING) }
+                }
+                if (phoneTools) item {
+                    NavButton(Icons.Rounded.PhoneIphone, WearBridgeColors.Accent, "iPhone",
+                        "Ping, camera, battery") { navigate(Routes.IPHONE) }
+                }
+                item {
+                    NavButton(Icons.Rounded.Notifications, WearBridgeColors.Alert, "Notifications",
+                        "Apps, previews, sync") { navigate(Routes.NOTIFICATIONS) }
+                }
+                item {
+                    NavButton(Icons.Rounded.ClearAll, Color(0xFF8E8E93), "Clear All", null) {
+                        onClearAll()
                     }
                 }
-
-                item { DashboardButton("Workouts", "Record or sync a session", onWorkout) }
-                if (phoneTools) {
-                    item { DashboardButton("iPhone", "Battery, ping & camera") { panel = "iPhone" } }
-                }
-                if (mediaAvailable) {
-                    item { DashboardButton("Now playing", nowPlaying.title.ifBlank { "Playback controls" }) { panel = "Now playing" } }
-                }
-
                 item {
                     Button(
-                        onClick = onNotificationSettings,
-                        modifier = Modifier.fillMaxWidth(0.9f)
-                    ) {
-                        Text("Notification Settings", fontSize = 12.sp)
-                    }
-                }
-
-                // Clear notifications
-                item {
-                    Button(
-                        onClick = { viewModel.clearAllNotifications() },
-                        modifier = Modifier.fillMaxWidth(0.9f)
-                    ) {
-                        Text("Clear Notifications", fontSize = 12.sp)
-                    }
-                }
-
-                item { Spacer(modifier = Modifier.height(4.dp)) }
-
-                // Disconnect
-                item {
-                    Button(
-                        onClick = { viewModel.disconnect() },
-                        modifier = Modifier.fillMaxWidth(0.9f),
+                        onClick = onDisconnect,
+                        modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFFEF4444)
-                        )
-                    ) {
-                        Text("Disconnect", fontSize = 12.sp, color = Color.White)
-                    }
+                            containerColor = Color(0xFF2C1414),
+                            contentColor = WearBridgeColors.Danger,
+                            iconColor = WearBridgeColors.Danger
+                        ),
+                        icon = { Icon(Icons.Rounded.LinkOff, contentDescription = null) },
+                    ) { Text("Disconnect") }
                 }
             }
 
             is ConnectionState.Connecting, is ConnectionState.Bonding -> {
-                item {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.padding(16.dp)
-                    ) {
-                        CircularProgressIndicator(modifier = Modifier.size(24.dp))
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            when (connectionState) {
-                                is ConnectionState.Connecting ->
-                                    "Connecting to ${(connectionState as ConnectionState.Connecting).deviceName ?: "iPhone"}…"
-                                is ConnectionState.Bonding ->
-                                    "Pairing with ${(connectionState as ConnectionState.Bonding).deviceName ?: "iPhone"}…"
-                                else -> "Connecting…"
-                            },
-                            textAlign = TextAlign.Center,
-                            fontSize = 13.sp
-                        )
-                    }
-                }
+                item { CircularProgressIndicator(modifier = Modifier.size(28.dp)) }
             }
 
             else -> {
-                item { DashboardButton("Workouts", "Record offline", onWorkout) }
-                // Idle / Disconnected / Error — show reconnect or pair
-
-                if (viewModel.hasBondedIPhone()) {
-                    // Has a bonded device — show reconnecting state
-                    item {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.padding(16.dp)
-                        ) {
-                            Icon(
-                                Icons.Rounded.PhoneIphone,
-                                contentDescription = null,
-                                tint = Color(0xFF9CA3AF),
-                                modifier = Modifier.size(28.dp)
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                if (connectionState is ConnectionState.Error)
-                                    (connectionState as ConnectionState.Error).message
-                                else "iPhone not in range",
-                                textAlign = TextAlign.Center,
-                                fontSize = 13.sp,
-                                color = Color(0xFF9CA3AF)
-                            )
-                        }
-                    }
-
-                    item {
-                        Button(
-                            onClick = { viewModel.startService() },
-                            modifier = Modifier.fillMaxWidth(0.9f)
-                        ) {
-                            Text("Reconnect", fontSize = 12.sp)
-                        }
-                    }
-
-                    item { Spacer(modifier = Modifier.height(4.dp)) }
-                } else {
-                    // No bonded device — prompt to pair
-                    item {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.padding(16.dp)
-                        ) {
-                            Icon(
-                                Icons.Rounded.PhoneIphone,
-                                contentDescription = null,
-                                tint = Color(0xFF9CA3AF),
-                                modifier = Modifier.size(32.dp)
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                "No iPhone paired",
-                                fontSize = 14.sp,
-                                textAlign = TextAlign.Center
-                            )
-                            Text(
-                                "Pair your iPhone to start receiving notifications",
-                                fontSize = 11.sp,
-                                color = Color(0xFF9CA3AF),
-                                textAlign = TextAlign.Center
-                            )
-                        }
-                    }
-                }
-
-                // Always show Pair New Device button
-                item {
+                if (hasBonded) item {
                     Button(
-                        onClick = onPairNewDevice,
-                        modifier = Modifier.fillMaxWidth(0.9f),
-                        colors = if (viewModel.hasBondedIPhone())
-                            ButtonDefaults.buttonColors(containerColor = Color(0xFF374151))
-                        else ButtonDefaults.buttonColors()
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                Icons.Rounded.Add,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Pair New Device", fontSize = 12.sp)
-                        }
-                    }
+                        onClick = onReconnect,
+                        modifier = Modifier.fillMaxWidth(),
+                        icon = { Icon(Icons.Rounded.Refresh, contentDescription = null) },
+                    ) { Text("Reconnect") }
+                }
+                item {
+                    NavButton(Icons.Rounded.Add, WearBridgeColors.Accent,
+                        if (hasBonded) "Pair another iPhone" else "Pair iPhone", null) { navigate(Routes.PAIR) }
+                }
+                if (hasBonded) item {
+                    NavButton(Icons.Rounded.Notifications, WearBridgeColors.Alert, "Notifications",
+                        "Apps, previews, sync") { navigate(Routes.NOTIFICATIONS) }
                 }
             }
         }
     }
 }
 
-@SuppressLint("MissingPermission")
 @Composable
-fun PairNewDeviceScreen(viewModel: MainViewModel, onDismiss: () -> Unit) {
-    val connectionState by viewModel.connectionState.collectAsState()
-    val isScanning by viewModel.isScanning.collectAsState()
-    val scanStatus by viewModel.scanStatus.collectAsState()
-
-    val paired = remember { viewModel.pairedPhones() }
-
-    // Auto-dismiss when connected
-    if (connectionState is ConnectionState.Connected) {
-        onDismiss()
-        return
+private fun StatusHeader(state: ConnectionState, hasBonded: Boolean) {
+    val connected = state is ConnectionState.Connected
+    val (title, subtitle) = when (state) {
+        is ConnectionState.Connected -> (state.deviceName ?: "iPhone") to "Connected"
+        is ConnectionState.Connecting -> (state.deviceName ?: "iPhone") to "Connecting…"
+        is ConnectionState.Bonding -> (state.deviceName ?: "iPhone") to "Accept the pairing request on iPhone"
+        is ConnectionState.Error -> "iPhone" to state.message
+        else -> if (hasBonded) "iPhone" to "Not nearby · reconnects automatically"
+        else "WearBridge" to "Get iPhone notifications on this watch"
     }
-
-    ScalingLazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        horizontalAlignment = Alignment.CenterHorizontally
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 4.dp)
     ) {
-        item {
-            ListHeader {
-                Text("Pair New Device")
+        Box(contentAlignment = Alignment.BottomEnd) {
+            Box(
+                modifier = Modifier.size(40.dp).clip(CircleShape)
+                    .background(if (connected) WearBridgeColors.Accent else Color(0xFF3A3A3C)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Rounded.PhoneIphone, contentDescription = null,
+                    tint = Color.White, modifier = Modifier.size(22.dp))
+            }
+            Box(
+                modifier = Modifier.size(12.dp).clip(CircleShape).background(Color.Black).padding(2.dp)
+            ) {
+                Box(Modifier.fillMaxSize().clip(CircleShape).background(
+                    when (state) {
+                        is ConnectionState.Connected -> WearBridgeColors.Online
+                        is ConnectionState.Error -> WearBridgeColors.Danger
+                        is ConnectionState.Connecting, is ConnectionState.Bonding -> WearBridgeColors.Alert
+                        else -> Color(0xFF8E8E93)
+                    }
+                ))
             }
         }
+        Spacer(Modifier.height(6.dp))
+        Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1,
+            overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+        Text(subtitle, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center,
+            color = if (connected) WearBridgeColors.Online else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 12.dp))
+    }
+}
 
-        // Instructions
-        item {
+@Composable
+private fun NavButton(
+    icon: ImageVector,
+    tint: Color,
+    label: String,
+    secondary: String?,
+    onClick: () -> Unit
+) {
+    Button(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        colors = ButtonDefaults.filledTonalButtonColors(),
+        icon = { IconBadge(icon, tint) },
+        secondaryLabel = secondary?.let {
+            { Text(it, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+        },
+    ) { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+}
+
+/** Colored circular icon, like the app icons in Apple Watch's settings lists. */
+@Composable
+private fun IconBadge(icon: ImageVector, tint: Color) {
+    Box(
+        modifier = Modifier.size(26.dp).clip(CircleShape).background(tint),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+    }
+}
+
+// ---------------------------------------------------------------------------------------
+// Now Playing — controls the iPhone's current player over Apple Media Service
+// ---------------------------------------------------------------------------------------
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun NowPlayingScreen(viewModel: MainViewModel) {
+    val nowPlaying by viewModel.nowPlaying.collectAsState()
+    val supported by viewModel.supportedCommands.collectAsState()
+    NowPlayingContent(nowPlaying, supported) { viewModel.sendMediaCommand(it.code) }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+internal fun NowPlayingContent(
+    nowPlaying: NowPlaying,
+    supported: Set<Int>?,
+    send: (MediaCommand) -> Unit,
+) {
+    val focusRequester = remember { FocusRequester() }
+    var crownDelta by remember { mutableFloatStateOf(0f) }
+    fun can(command: MediaCommand) = MediaCommand.isSupported(supported, command)
+
+    LaunchedEffect(Unit) { focusRequester.requestFocus() }
+
+    ScreenScaffold {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                // Digital-crown volume, as on Apple Watch.
+                .onRotaryScrollEvent { event ->
+                    crownDelta += event.verticalScrollPixels
+                    if (abs(crownDelta) > 48f) {
+                        val up = crownDelta > 0
+                        crownDelta = 0f
+                        val command = if (up) MediaCommand.VOLUME_UP else MediaCommand.VOLUME_DOWN
+                        if (can(command)) send(command)
+                    }
+                    true
+                }
+                .focusRequester(focusRequester)
+                .focusable(),
+            contentAlignment = Alignment.Center
+        ) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 22.dp)
             ) {
                 Text(
-                    "Choose your paired iPhone below, or open WearBridge on iPhone and scan.",
-                    textAlign = TextAlign.Center,
-                    fontSize = 12.sp,
-                    color = Color(0xFF9CA3AF)
+                    nowPlaying.player.ifBlank { "iPhone" },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = WearBridgeColors.Music, maxLines = 1
                 )
-            }
-        }
-
-        if (connectionState !is ConnectionState.Connecting && connectionState !is ConnectionState.Bonding) {
-            paired.forEach { (name, address) ->
-                item(key = address) {
-                    Button(onClick = { viewModel.connectToDevice(address) }, modifier = Modifier.fillMaxWidth(0.9f)) {
-                        Text("Connect to $name")
-                    }
-                }
-            }
-        }
-
-        // Scanning state
-        when (connectionState) {
-            is ConnectionState.Connecting -> {
-                item {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.padding(16.dp)
-                    ) {
-                        CircularProgressIndicator(modifier = Modifier.size(24.dp))
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            "Connecting to ${(connectionState as ConnectionState.Connecting).deviceName ?: "iPhone"}…",
-                            textAlign = TextAlign.Center,
-                            fontSize = 13.sp
-                        )
-                    }
-                }
-            }
-
-            is ConnectionState.Bonding -> {
-                item {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.padding(16.dp)
-                    ) {
-                        CircularProgressIndicator(modifier = Modifier.size(24.dp))
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            "Accept the pairing dialog on your iPhone",
-                            textAlign = TextAlign.Center,
-                            fontSize = 13.sp
-                        )
-                    }
-                }
-            }
-
-            else -> {
-                // Scan button
-                item {
-                    Button(
-                        onClick = {
-                            if (isScanning) viewModel.stopScan()
-                            else viewModel.scanAndConnect()
-                        },
-                        modifier = Modifier.fillMaxWidth(0.9f)
-                    ) {
-                        Text(
-                            if (isScanning) "Stop Scanning" else "Start Scanning",
-                            fontSize = 12.sp
-                        )
-                    }
-                }
-
-                // Scan status
-                if (isScanning || scanStatus.isNotEmpty()) {
-                    item {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.padding(8.dp)
-                        ) {
-                            if (isScanning) {
-                                CircularProgressIndicator(modifier = Modifier.size(20.dp))
-                                Spacer(modifier = Modifier.height(4.dp))
-                            }
-                            if (scanStatus.isNotEmpty()) {
-                                Text(
-                                    scanStatus,
-                                    textAlign = TextAlign.Center,
-                                    fontSize = 11.sp,
-                                    color = Color(0xFF9CA3AF)
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        item { Spacer(modifier = Modifier.height(8.dp)) }
-
-        // Back button
-        item {
-            Button(
-                onClick = {
-                    viewModel.stopScan()
-                    onDismiss()
-                },
-                modifier = Modifier.fillMaxWidth(0.9f),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFF374151)
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    nowPlaying.title.ifBlank { "Not Playing" },
+                    fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1,
+                    modifier = Modifier.basicMarquee()
                 )
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        Icons.Rounded.Close,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp)
+                if (nowPlaying.artist.isNotBlank()) {
+                    Text(
+                        nowPlaying.artist, fontSize = 12.sp, maxLines = 1,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.basicMarquee()
                     )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Back", fontSize = 12.sp)
+                }
+                Spacer(Modifier.height(10.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    IconButton(
+                        onClick = { send(MediaCommand.PREVIOUS_TRACK) },
+                        enabled = can(MediaCommand.PREVIOUS_TRACK),
+                        colors = mediaIconColors(),
+                    ) { Icon(Icons.Rounded.SkipPrevious, contentDescription = "Previous", modifier = Modifier.size(30.dp)) }
+                    FilledIconButton(
+                        onClick = { send(MediaCommand.TOGGLE_PLAYBACK) },
+                        modifier = Modifier.size(60.dp),
+                        colors = IconButtonDefaults.filledIconButtonColors(
+                            containerColor = Color(0xFF3A3A3C), contentColor = Color.White
+                        ),
+                    ) {
+                        Icon(
+                            if (nowPlaying.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                            contentDescription = if (nowPlaying.isPlaying) "Pause" else "Play",
+                            modifier = Modifier.size(34.dp)
+                        )
+                    }
+                    IconButton(
+                        onClick = { send(MediaCommand.NEXT_TRACK) },
+                        enabled = can(MediaCommand.NEXT_TRACK),
+                        colors = mediaIconColors(),
+                    ) { Icon(Icons.Rounded.SkipNext, contentDescription = "Next", modifier = Modifier.size(30.dp)) }
+                }
+                Spacer(Modifier.height(6.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(
+                        onClick = { send(MediaCommand.VOLUME_DOWN) },
+                        enabled = can(MediaCommand.VOLUME_DOWN),
+                        colors = mediaIconColors(),
+                        modifier = Modifier.size(32.dp)
+                    ) { Icon(Icons.AutoMirrored.Rounded.VolumeDown, contentDescription = "Volume down", modifier = Modifier.size(18.dp)) }
+                    VolumeBar(nowPlaying.volume, Modifier.width(56.dp))
+                    IconButton(
+                        onClick = { send(MediaCommand.VOLUME_UP) },
+                        enabled = can(MediaCommand.VOLUME_UP),
+                        colors = mediaIconColors(),
+                        modifier = Modifier.size(32.dp)
+                    ) { Icon(Icons.AutoMirrored.Rounded.VolumeUp, contentDescription = "Volume up", modifier = Modifier.size(18.dp)) }
                 }
             }
         }
     }
 }
 
+@Composable
+private fun mediaIconColors() = IconButtonDefaults.iconButtonColors(
+    contentColor = Color.White,
+    disabledContentColor = Color(0xFF636366)
+)
+
+/** iOS-style switches: dark card, green track when on. */
+@Composable
+private fun appleSwitchColors() = SwitchButtonDefaults.switchButtonColors(
+    checkedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+    checkedContentColor = Color.White,
+    checkedSecondaryContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+    checkedIconColor = WearBridgeColors.Accent,
+    checkedTrackColor = WearBridgeColors.Online,
+    checkedTrackBorderColor = WearBridgeColors.Online,
+    checkedThumbColor = Color.White,
+    checkedThumbIconColor = WearBridgeColors.Online,
+)
 
 @Composable
-private fun NotificationSettingsScreen(viewModel: MainViewModel, onBack: () -> Unit) {
+private fun VolumeBar(volume: Float?, modifier: Modifier) {
+    Box(modifier.height(4.dp).clip(RoundedCornerShape(2.dp)).background(Color(0xFF3A3A3C))) {
+        Box(
+            Modifier.fillMaxWidth(volume ?: 0f).height(4.dp)
+                .clip(RoundedCornerShape(2.dp)).background(Color.White)
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------------------
+// iPhone tools (requires the WearBridge iPhone app)
+// ---------------------------------------------------------------------------------------
+
+@Composable
+private fun PhoneToolsScreen(viewModel: MainViewModel) {
+    val summary by viewModel.phoneSummary.collectAsState()
+    LaunchedEffect(Unit) { viewModel.phoneControl(0) }
+
+    ListScreen {
+        item { ListHeader { Text("iPhone") } }
+        item {
+            Text(
+                summary.ifBlank { "Loading battery & agenda…" },
+                style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp)
+            )
+        }
+        item {
+            NavButton(Icons.Rounded.NotificationsActive, WearBridgeColors.Accent, "Ping iPhone",
+                "Find your iPhone") { viewModel.phoneControl(1) }
+        }
+        item {
+            NavButton(Icons.Rounded.PhotoCamera, Color(0xFF8E8E93), "Camera Shutter",
+                "Open Camera in WearBridge first") { viewModel.phoneControl(2) }
+        }
+        item {
+            NavButton(Icons.Rounded.Refresh, Color(0xFF636366), "Refresh", null) { viewModel.phoneControl(0) }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------
+// Notification settings
+// ---------------------------------------------------------------------------------------
+
+@Composable
+private fun NotificationSettingsScreen(viewModel: MainViewModel) {
     val preferences = viewModel.notificationPreferences
     val stats by viewModel.sessionStats.collectAsState()
-    val apps = remember { preferences.apps() }
+    val context = LocalContext.current
+    val apps = remember {
+        preferences.apps().map { (id, name) ->
+            AppToggle(id, name, preferences.isEnabled(id),
+                AppIconMapper.badge(context, id, -1, 64).asImageBitmap())
+        }
+    }
     var showPreviews by remember { mutableStateOf(preferences.showPreviews) }
-    var syncDismissals by remember { mutableStateOf(preferences.syncDismissals) }
     var catchUp by remember { mutableStateOf(preferences.catchUp) }
-    BackHandler(onBack = onBack)
+    var syncDismissals by remember { mutableStateOf(preferences.syncDismissals) }
 
-    ScalingLazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
+    NotificationSettingsContent(
+        showPreviews = showPreviews,
+        onShowPreviews = {
+            showPreviews = it
+            preferences.showPreviews = it
+            viewModel.clearAllNotifications()
+        },
+        syncDismissals = syncDismissals,
+        onSyncDismissals = { syncDismissals = it; preferences.syncDismissals = it },
+        catchUp = catchUp,
+        onCatchUp = { catchUp = it; preferences.catchUp = it },
+        apps = apps,
+        onAppToggle = { id, enabled -> preferences.setEnabled(id, enabled) },
+        statsLine = "This connection: ${stats.received} events · ${stats.posted} shown" +
+            if (stats.timeouts > 0) " · ${stats.timeouts} late" else "",
+    )
+}
+
+internal data class AppToggle(
+    val id: String,
+    val name: String,
+    val enabled: Boolean,
+    val badge: androidx.compose.ui.graphics.ImageBitmap,
+)
+
+@Composable
+internal fun NotificationSettingsContent(
+    showPreviews: Boolean,
+    onShowPreviews: (Boolean) -> Unit,
+    syncDismissals: Boolean,
+    onSyncDismissals: (Boolean) -> Unit,
+    catchUp: Boolean,
+    onCatchUp: (Boolean) -> Unit,
+    apps: List<AppToggle>,
+    onAppToggle: (String, Boolean) -> Unit,
+    statsLine: String,
+) {
+    ListScreen {
         item { ListHeader { Text("Notifications") } }
         item {
-            Button(
-                onClick = {
-                    showPreviews = !showPreviews
-                    preferences.showPreviews = showPreviews
-                    viewModel.clearAllNotifications()
-                },
-                modifier = Modifier.fillMaxWidth(0.9f)
-            ) {
-                Text(if (showPreviews) "Previews: On" else "Previews: Off")
-            }
+            SettingSwitch(showPreviews, Icons.Rounded.Visibility, "Previews",
+                "Show message text", onShowPreviews)
         }
         item {
-            Button(onClick = {
-                catchUp = !catchUp
-                preferences.catchUp = catchUp
-            }, modifier = Modifier.fillMaxWidth(0.9f)) {
-                Text(if (catchUp) "Catch up quietly: On" else "Catch up quietly: Off")
-            }
+            SettingSwitch(syncDismissals, Icons.Rounded.Sync, "Sync Clearing",
+                "Swipe clears it on iPhone", onSyncDismissals)
         }
         item {
-            Text("This connection: ${stats.received} iPhone events · ${stats.posted} alert posts · ${stats.timeouts} timed out",
-                fontSize = 12.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(10.dp))
+            SettingSwitch(catchUp, Icons.Rounded.History, "Missed Alerts",
+                "Show quietly on reconnect", onCatchUp)
         }
-        item {
-            Button(onClick = {
-                syncDismissals = !syncDismissals
-                preferences.syncDismissals = syncDismissals
-            }, modifier = Modifier.fillMaxWidth(0.9f)) {
-                Text(if (syncDismissals) "Sync dismissals: On" else "Sync dismissals: Off")
-            }
-        }
+
+        item { ListHeader { Text("Apps") } }
         if (apps.isEmpty()) {
             item {
                 Text(
-                    "Apps appear after their first alert.",
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(12.dp)
+                    "Apps appear here after their first alert.",
+                    style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 14.dp)
                 )
             }
         }
-        apps.forEach { (id, name) ->
-            item(key = id) {
-                var enabled by remember { mutableStateOf(preferences.isEnabled(id)) }
-                Button(
-                    onClick = {
-                        enabled = !enabled
-                        preferences.setEnabled(id, enabled)
+        apps.forEach { app ->
+            item(key = app.id) {
+                var enabled by remember { mutableStateOf(app.enabled) }
+                SwitchButton(
+                    checked = enabled,
+                    onCheckedChange = {
+                        enabled = it
+                        onAppToggle(app.id, it)
                     },
-                    modifier = Modifier.fillMaxWidth(0.9f)
-                ) {
-                    Text("$name: ${if (enabled) "On" else "Off"}", maxLines = 2)
-                }
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = appleSwitchColors(),
+                    icon = { Image(app.badge, contentDescription = null, modifier = Modifier.size(26.dp)) },
+                ) { Text(app.name, maxLines = 1, overflow = TextOverflow.Ellipsis) }
             }
         }
         item {
-            Button(onClick = onBack, modifier = Modifier.fillMaxWidth(0.9f)) {
-                Text("Back")
-            }
+            Text(
+                statsLine,
+                style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
+            )
         }
     }
 }
 
 @Composable
-private fun WorkoutScreen(vm: MainViewModel, back: () -> Unit) {
-    val store = vm.workouts
-    val state by store.state.collectAsState()
-    val companion by vm.phoneTools.collectAsState()
-    BackHandler(onBack = back)
-    ScalingLazyColumn(horizontalAlignment = Alignment.CenterHorizontally) {
-        item { ListHeader { Text("Timed workout") } }
-        val current = state.first
-        if (current != null) {
-            item { Text("$current in progress") }
-            item { Button(onClick = { store.finish() }) { Text("Finish workout") } }
-        } else if (state.second < 50) {
-            listOf("Walk", "Run", "Cycle").forEach { kind ->
-                item { Button(onClick = { store.start(kind) }) { Text("Start $kind") } }
-            }
-        }
-        item { Text("Saved on watch: ${state.second}") }
-        if (state.second > 0 && companion) {
-            item { Button(onClick = vm::syncWorkouts) { Text("Sync to Apple Health") } }
-        }
-        item { Button(onClick = back) { Text("Back") } }
-    }
+private fun SettingSwitch(
+    checked: Boolean,
+    icon: ImageVector,
+    label: String,
+    secondary: String,
+    onChange: (Boolean) -> Unit
+) {
+    SwitchButton(
+        checked = checked,
+        onCheckedChange = onChange,
+        modifier = Modifier.fillMaxWidth(),
+        colors = appleSwitchColors(),
+        icon = { Icon(icon, contentDescription = null) },
+        secondaryLabel = { Text(secondary, maxLines = 2) },
+    ) { Text(label, maxLines = 1) }
 }
 
+// ---------------------------------------------------------------------------------------
+// Pairing
+// ---------------------------------------------------------------------------------------
+
+@SuppressLint("MissingPermission")
 @Composable
-private fun DashboardButton(title: String, subtitle: String?, onClick: () -> Unit) {
-    Button(onClick = onClick, modifier = Modifier.fillMaxWidth(0.9f)) {
-        Column {
-            Text(title, fontSize = 14.sp, maxLines = 1)
-            if (!subtitle.isNullOrBlank()) {
-                Text(subtitle, fontSize = 11.sp, maxLines = 1,
-                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+private fun PairScreen(viewModel: MainViewModel, onDone: () -> Unit) {
+    val state by viewModel.connectionState.collectAsState()
+    val isScanning by viewModel.isScanning.collectAsState()
+    val scanStatus by viewModel.scanStatus.collectAsState()
+    val paired = remember { viewModel.pairedPhones() }
+
+    LaunchedEffect(state) { if (state is ConnectionState.Connected) onDone() }
+
+    ListScreen {
+        item { ListHeader { Text("Pair iPhone") } }
+        when (state) {
+            is ConnectionState.Connecting, is ConnectionState.Bonding -> {
+                item { CircularProgressIndicator(modifier = Modifier.size(28.dp)) }
+                item {
+                    Text(
+                        if (state is ConnectionState.Bonding) "Tap Pair on your iPhone, then Allow notifications"
+                        else "Connecting…",
+                        style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(horizontal = 14.dp)
+                    )
+                }
+            }
+            else -> {
+                item {
+                    Text(
+                        "Open WearBridge on your iPhone, keep it unlocked, then tap Search.",
+                        style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 14.dp)
+                    )
+                }
+                item {
+                    Button(
+                        onClick = { if (isScanning) viewModel.stopScan() else viewModel.scanAndConnect() },
+                        modifier = Modifier.fillMaxWidth(),
+                        icon = {
+                            if (isScanning) CircularProgressIndicator(modifier = Modifier.size(20.dp))
+                            else Icon(Icons.Rounded.Bluetooth, contentDescription = null)
+                        },
+                        secondaryLabel = scanStatus.takeIf { it.isNotBlank() }?.let {
+                            { Text(it, maxLines = 2) }
+                        },
+                    ) { Text(if (isScanning) "Stop" else "Search") }
+                }
+                if (paired.isNotEmpty()) {
+                    item { ListHeader { Text("Already paired") } }
+                    paired.forEach { (name, address) ->
+                        item(key = address) {
+                            NavButton(Icons.Rounded.PhoneIphone, WearBridgeColors.Accent, name, "Connect") {
+                                viewModel.connectToDevice(address)
+                            }
+                        }
+                    }
+                }
             }
         }
     }

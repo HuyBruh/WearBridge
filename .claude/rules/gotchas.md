@@ -37,3 +37,10 @@
 18. **A Bluetooth restart leaves a dead `BluetoothGatt` with no callback**: Toggle, stack crash or OTA reboot kills every GATT client without `onConnectionStateChange`, so state stayed `Connecting` and `reconnect()` skipped as "already connecting". Listen to `ACTION_STATE_CHANGED`: reset on TURNING_OFF/OFF, reconnect on ON (falling back to the bonded iPhone, since a service started with Bluetooth off never set a target).
 
 19. **ANCS attribute tuples split anywhere across GATT packets**: The parser must not start a tuple until ID + 2-byte length are buffered. JVM unit tests need `unitTests.isReturnDefaultValues = true`, or `android.util.Log` throws and every parser test fails before asserting (this hid the bug).
+
+20. **One GATT operation at a time, or notifications vanish**: Android rejects a read/write/CCCD write while another is outstanding (`ERROR_GATT_WRITE_REQUEST_BUSY`). Firing the GAP name read, companion reads, AMS subscriptions and Control Point writes concurrently made attribute requests fail, and the alert was dropped. Every GATT operation goes through `BleConnectionManager.runOperation` (FIFO mutex, waits for the callback, 5 s timeout). Never call `gatt.read*/write*` directly.
+
+21. **ScalingLazyColumn renders empty in Paparazzi/previews**: layoutlib never runs its first layout pass. `ListScreen` lays items out in a plain `Column` when `LocalInspectionMode` is true; the screenshot tests provide it explicitly. Record with `./gradlew recordPaparazziDebug` (images in `app/src/test/snapshots`).
+
+22. **iOS hides ANCS per watch**: iPhone Settings › Bluetooth › ⓘ › "Share System Notifications" off = bonded but no ANCS service. After 3 discovery retries the watch shows that hint and keeps retrying with backoff.
+

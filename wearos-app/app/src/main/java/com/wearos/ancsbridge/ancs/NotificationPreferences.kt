@@ -28,7 +28,7 @@ class NotificationPreferences(context: Context) {
         set(value) { prefs.edit().putBoolean("sync_dismissals", value).apply() }
 
     var catchUp: Boolean
-        get() = prefs.getBoolean("catch_up", true)
+        get() = prefs.getBoolean("catch_up", false)
         set(value) { prefs.edit().putBoolean("catch_up", value).apply() }
 
     var showPreviews: Boolean

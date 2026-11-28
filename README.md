@@ -21,6 +21,9 @@ iPhone (iOS 26)                       Wear OS Watch
 ## Features
 
 - **Real-time notification mirroring** — messages, emails, calls, calendar alerts, and more
+- **Apple Watch-style alerts** — round, brand-colored app badge on every alert (Zalo, Messages, Messenger, WhatsApp, Gmail…)
+- **Now Playing** — play/pause, next/previous and crown-controlled volume for whatever plays on the iPhone (Apple Media Service)
+- **Native Wear OS UI** — Material 3 for Wear OS, swipe-to-go-back, curved time text, iOS-style switches
 - **Notification Settings** — turn future alerts from observed apps on or off and hide message previews. Incoming call screens are separate.
 - **75+ app icon mappings** — WhatsApp, Slack, Gmail, Instagram, Telegram, Discord, and many more show their own icons (Material Design, 25% padded for Wear OS)
 - **Incoming call overlay** — integrated with Android Telecom framework (ConnectionService) for system-level call UI that shows over charging screen and lock screen, with Answer, Decline, and Quick Reply

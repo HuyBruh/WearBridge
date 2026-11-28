@@ -43,11 +43,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     val supportedCommands = AncsService.supportedMediaCommands
-    val workouts = com.wearos.ancsbridge.ancs.WorkoutLog(application)
-    fun syncWorkouts() {
-        val context = getApplication<Application>()
-        context.startService(Intent(context, AncsService::class.java).setAction("sync_workouts"))
-    }
     val phoneTools = AncsService.phoneTools
     val phoneSummary = AncsService.phoneSummary
     fun phoneControl(code: Int) {

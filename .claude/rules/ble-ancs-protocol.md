@@ -23,7 +23,9 @@
 ## Reconnection
 
 - `autoConnect=true` in `connectGatt()` for bonded devices (chipset whitelist, battery efficient)
-- Exponential backoff: 3s → 6s → 12s → 30s cap
+- Exponential backoff: 2s → 4s → 8s → … → 30s cap; reset once an ANCS session is active
+- All GATT operations are serialized by `runOperation` (see gotcha #20); the session setup (DS → NS → GAP name → companion → AMS) is one coroutine
+- `onServiceChanged` (companion app started/stopped) → disconnect and reconnect after 500 ms
 - `START_STICKY` service + `BootReceiver` for persistence
 - `getBondedIPhone()` matches device names containing "iPhone", "AncsBrid", "AncsBridge", "WearBrid", "WearBridge"
 - GAP Device Name characteristic (0x2A00) read after ANCS connects for real iPhone name
@@ -33,8 +35,8 @@
 
 ## Silent/Pre-existing Notification Handling
 
-- Pre-existing notifications (`EVENT_FLAG_PRE_EXISTING`) are skipped at NS event level — no GATT writes, no haptics
-- 60-second reconnection grace period skips all non-call NS events to avoid vibration storms
+- Pre-existing notifications (`EVENT_FLAG_PRE_EXISTING`) are skipped at NS event level — no GATT writes, no haptics — unless the user turns on "Missed Alerts" (off by default), which posts them on the silent channel
+- No time-based grace period: genuinely new alerts right after a reconnect are shown
 - **Never use `setNotificationSilent()`** — it kills heads-up overlays on Wear OS
 
 ## Notification Channels
@@ -59,6 +61,15 @@ When a call is answered on the iPhone, the watch overlay transitions from "Incom
 1. **Companion BLE** (opt-in): `CXCallObserver` → call state characteristic `A0E3D5B4-...` → watch subscribes for notifications. Toggle: Settings → Live Call Status. The state is derived from all incoming calls (a waiting call that rings wins over the active one; outgoing calls are ignored); "ended" turns into idle 2 s later.
 2. **ANCS MODIFIED**: NS event with EventID=1 for active call UID triggers overlay transition.
 3. **Safety timeout**: 45-second auto-dismiss if no events arrive.
+
+## Apple Media Service (Now Playing)
+
+| Characteristic | UUID | Role |
+|---|---|---|
+| Remote Command | `9B3C81D8-57B1-4A8A-B8DF-0E56F7CA51C2` | Notify = supported command IDs; write = send command |
+| Entity Update | `2F7CABCE-808D-411F-9A0C-BB92BA96C102` | Write `[0,0,1,2]` (player name, playback info, volume) and `[2,0,2]` (artist, title); notify = updates |
+
+Crown rotation on the Now Playing screen sends Volume Up/Down.
 
 ## Companion Service Characteristics
 

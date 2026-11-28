@@ -103,8 +103,11 @@ class AncsService : Service() {
 
     private var activeCallUid: Long = -1
 
+    // UIDs that belong to the current ANCS session: only these may send actions to iOS.
+    // Alerts from an earlier session stay visible (like Apple Watch) but become read-only.
+    private val actionableUids = HashSet<Long>()
+
     // Serial queue for Control Point requests
-    private var syncingWorkouts = false
     private var sessionToken = java.util.UUID.randomUUID().toString()
     private val pending = PendingAlerts()
     private val wakeProcessor = Channel<Unit>(Channel.CONFLATED)
@@ -118,8 +121,7 @@ class AncsService : Service() {
         inFlight = null
         attributeResponse?.cancel()
         dataSourceAssembler.reset()
-        activeNotificationIds.forEach { notificationManager.cancel(MIRROR_TAG, it) }
-        activeNotificationIds.clear()
+        actionableUids.clear()
     }
 
     override fun onCreate() {
@@ -149,7 +151,6 @@ class AncsService : Service() {
         connectionManager.onNotificationEvent = ::handleNotificationSourceEvent
         connectionManager.onAttributeData = ::handleDataSourceEvent
         connectionManager.onSessionReset = ::resetNotificationSession
-        connectionManager.onAttributeRequestFailed = { attributeResponse?.complete(Unit) }
 
         // Listen for companion app call state events (Live Call Status feature)
         scope.launch {
@@ -234,7 +235,12 @@ class AncsService : Service() {
                 val callerName = intent.getStringExtra("caller_name") ?: "Unknown"
                 val payload = "$callerName|$replyText"
                 Log.d(TAG, "Sending quick reply via BLE")
-                connectionManager.writeQuickReply(payload)
+                scope.launch {
+                    if (!connectionManager.writeQuickReply(payload)) {
+                        android.widget.Toast.makeText(this@AncsService,
+                            "Open WearBridge on iPhone to send replies", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }
             }
             ACTION_MEDIA_COMMAND -> {
                 val code = intent.getIntExtra(EXTRA_MEDIA_COMMAND, -1)
@@ -251,28 +257,13 @@ class AncsService : Service() {
             }
             "swiped_alert" -> {
                 val uid = intent.getLongExtra("uid", -1)
-                if (intent.getStringExtra("session") == sessionToken && activeNotificationIds.remove(uid.toInt())) {
+                activeNotificationIds.remove(uid.toInt())
+                if (intent.getStringExtra("session") == sessionToken && actionableUids.remove(uid)) {
                     val dismissAction = intent.getIntExtra("dismissAction", -1)
                     if (notificationPreferences.syncDismissals && dismissAction in 0..1) {
                         val bytes = ControlPointWriter.buildPerformNotificationAction(uid, dismissAction)
                         scope.launch { connectionManager.writeAttributeRequest(bytes) }
                     }
-                }
-            }
-            "sync_workouts" -> if (!syncingWorkouts) {
-                syncingWorkouts = true
-                scope.launch {
-                    try {
-                        val store = WorkoutLog(this@AncsService)
-                        while (true) {
-                            val next = store.completed().firstOrNull() ?: break
-                            if (!connectionManager.sendWorkout(next.toString().encodeToByteArray())) {
-                                android.widget.Toast.makeText(this@AncsService, "Workout kept. Check Health access on iPhone.", android.widget.Toast.LENGTH_LONG).show()
-                                break
-                            }
-                            store.acknowledge(next.getString("id"))
-                        }
-                    } finally { syncingWorkouts = false }
                 }
             }
             "phone_control" -> {
@@ -286,7 +277,7 @@ class AncsService : Service() {
             ACTION_DRAFT -> {
                 val text = androidx.core.app.RemoteInput.getResultsFromIntent(intent)?.getCharSequence("body")?.toString()?.trim()
                 val uid = intent.getLongExtra("uid", -1)
-                if (!text.isNullOrEmpty() && uid.toInt() in activeNotificationIds && intent.getStringExtra("session") == sessionToken) {
+                if (!text.isNullOrEmpty() && uid in actionableUids && intent.getStringExtra("session") == sessionToken) {
                     val payload = org.json.JSONObject().put("id", java.util.UUID.randomUUID().toString())
                         .put("sender", intent.getStringExtra("sender").orEmpty()).put("body", text)
                         .toString().encodeToByteArray()
@@ -303,6 +294,7 @@ class AncsService : Service() {
                     notificationManager.cancel(MIRROR_TAG, id)
                 }
                 activeNotificationIds.clear()
+                actionableUids.clear()
                 pending.clear()
                 inFlight = null
                 attributeResponse?.complete(Unit)
@@ -439,6 +431,7 @@ class AncsService : Service() {
                 val removedId = notificationIdForUid(event.notificationUid)
                 notificationManager.cancel(MIRROR_TAG, removedId)
                 activeNotificationIds.remove(removedId)
+                actionableUids.remove(event.notificationUid)
 
                 // If this was the call on screen, dismiss everything (not for another
                 // call ending while a second one rings: call waiting).
@@ -632,9 +625,11 @@ class AncsService : Service() {
         }
         val notifTime = parseAncsDate(notification.date)
 
+        val badge = AppIconMapper.badge(this, notification.appIdentifier, notification.categoryId)
         val builder = NotificationCompat.Builder(this, channelId)
             .setSmallIcon(iconResId)
-            .setLargeIcon(AppIconMapper.getIcon(this, notification.appIdentifier, notification.categoryId))
+            .setLargeIcon(badge)
+            .setColor(AppIconMapper.colorFor(notification.appIdentifier, notification.categoryId))
             .setContentTitle(senderName)
             .setContentText(messagePreview)
             .setSubText(appName ?: notification.appIdentifier)
@@ -666,7 +661,7 @@ class AncsService : Service() {
         if (messagePreview.isNotEmpty()) {
             val person = androidx.core.app.Person.Builder()
                 .setName(senderName)
-                .setIcon(androidx.core.graphics.drawable.IconCompat.createWithResource(this, iconResId))
+                .setIcon(androidx.core.graphics.drawable.IconCompat.createWithBitmap(badge))
                 .build()
             builder.setStyle(
                 NotificationCompat.MessagingStyle(person)
@@ -724,6 +719,7 @@ class AncsService : Service() {
         notificationManager.notify(MIRROR_TAG, notifId, builder.build())
         sessionStats.value = sessionStats.value.copy(posted = sessionStats.value.posted + 1)
         if (isPreExisting) activeNotificationIds.addFirst(notifId) else activeNotificationIds.addLast(notifId)
+        actionableUids.add(notification.uid)
     }
 
     /**
@@ -824,7 +820,7 @@ class AncsService : Service() {
 
 
     private fun performNotificationAction(uid: Long, actionId: Int) {
-        if (uid.toInt() !in activeNotificationIds && uid != activeCallUid) return
+        if (uid !in actionableUids && uid != activeCallUid) return
         val data = ControlPointWriter.buildPerformNotificationAction(uid, actionId)
         scope.launch {
             if (!connectionManager.writeAttributeRequest(data)) {
@@ -841,7 +837,7 @@ class AncsService : Service() {
         // For now, derive a readable name from the bundle ID
         // A full implementation would use GetAppAttributes, but that requires
         // another CP/DS round trip. We use a simple mapping instead.
-        val name = knownAppNames[appIdentifier] ?: run {
+        val name = knownAppNamesLower[appIdentifier.lowercase()] ?: run {
             // Extract last component: "com.apple.MobileSMS" -> "MobileSMS"
             appIdentifier.substringAfterLast(".")
         }
@@ -904,7 +900,10 @@ class AncsService : Service() {
             .build()
     }
 
+    private val knownAppNamesLower by lazy { knownAppNames.mapKeys { it.key.lowercase() } }
+
     private val knownAppNames = mapOf(
+        "vn.com.vng.zingalo" to "Zalo",
         // Apple Apps
         "com.apple.MobileSMS" to "Messages",
         "com.apple.mobilephone" to "Phone",

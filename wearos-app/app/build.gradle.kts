@@ -3,6 +3,7 @@ plugins {
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("com.google.devtools.ksp")
+    id("app.cash.paparazzi")
 }
 
 android {
@@ -13,8 +14,8 @@ android {
         applicationId = "com.wearos.ancsbridge"
         minSdk = 33 // Wear OS 4
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 3
+        versionName = "1.2"
     }
 
     buildTypes {

@@ -1,7 +1,11 @@
 package com.wearos.ancsbridge.ancs
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
 import android.graphics.drawable.Icon
+import androidx.core.content.ContextCompat
 import com.wearos.ancsbridge.R
 import com.wearos.ancsbridge.ble.AncsConstants
 
@@ -41,6 +45,7 @@ object AppIconMapper {
         "com.apple.Home" to R.drawable.ic_notification_default,
 
         // Messaging
+        "vn.com.vng.zingalo" to R.drawable.ic_messages,
         "net.whatsapp.WhatsApp" to R.drawable.ic_whatsapp,
         "net.whatsapp.WhatsAppSMB" to R.drawable.ic_whatsapp,
         "org.telegram.Telegram" to R.drawable.ic_telegram,
@@ -53,6 +58,7 @@ object AppIconMapper {
         "com.atebits.Tweetie2" to R.drawable.ic_social,
         "com.burbn.instagram" to R.drawable.ic_instagram,
         "com.facebook.Facebook" to R.drawable.ic_social,
+        "com.facebook.Pages" to R.drawable.ic_social,
         "com.linkedin.LinkedIn" to R.drawable.ic_social,
         "com.zhiliaoapp.musically" to R.drawable.ic_social,
         "com.toyopagroup.picaboo" to R.drawable.ic_social,
@@ -150,5 +156,92 @@ object AppIconMapper {
      */
     fun getIcon(context: Context, appIdentifier: String, categoryId: Int): Icon {
         return Icon.createWithResource(context, getIconResId(appIdentifier, categoryId))
+    }
+
+    // Brand-ish background colors, like the app icon tint Apple Watch shows on alerts.
+    private val appColorMap = mapOf(
+        "com.apple.MobileSMS" to 0xFF34C759,
+        "com.apple.mobilephone" to 0xFF34C759,
+        "com.apple.facetime" to 0xFF34C759,
+        "com.apple.mobilemail" to 0xFF1E88FF,
+        "com.apple.mobilecal" to 0xFFFF3B30,
+        "com.apple.reminders" to 0xFFFF9500,
+        "com.apple.mobiletimer" to 0xFFFF9500,
+        "com.apple.news" to 0xFFFF2D55,
+        "com.apple.mobilenotes" to 0xFFFFB800,
+        "com.apple.Health" to 0xFFFF2D55,
+        "com.apple.Fitness" to 0xFF30D158,
+        "com.apple.Maps" to 0xFF30B0C7,
+        "com.apple.Music" to 0xFFFA2D48,
+        "com.apple.podcasts" to 0xFF9B4DFF,
+        "com.apple.Passbook" to 0xFF1C1C1E,
+        "com.apple.findmy" to 0xFF34C759,
+        "com.apple.AppStore" to 0xFF0A84FF,
+        "vn.com.vng.zingalo" to 0xFF0068FF,
+        "net.whatsapp.WhatsApp" to 0xFF25D366,
+        "net.whatsapp.WhatsAppSMB" to 0xFF25D366,
+        "org.telegram.Telegram" to 0xFF229ED9,
+        "com.facebook.Messenger" to 0xFF0084FF,
+        "com.facebook.Facebook" to 0xFF1877F2,
+        "com.facebook.Pages" to 0xFF1877F2,
+        "org.whispersystems.signal" to 0xFF3A76F0,
+        "com.slack.Slack" to 0xFF4A154B,
+        "com.hammerandchisel.discord" to 0xFF5865F2,
+        "com.burbn.instagram" to 0xFFE1306C,
+        "com.burbn.barcelona" to 0xFF1C1C1E,
+        "com.atebits.Tweetie2" to 0xFF1C1C1E,
+        "com.zhiliaoapp.musically" to 0xFF1C1C1E,
+        "com.linkedin.LinkedIn" to 0xFF0A66C2,
+        "com.reddit.Reddit" to 0xFFFF4500,
+        "com.google.Gmail" to 0xFFEA4335,
+        "com.microsoft.Office.Outlook" to 0xFF0078D4,
+        "com.google.calendar" to 0xFF4285F4,
+        "com.google.ios.youtube" to 0xFFFF0000,
+        "com.spotify.client" to 0xFF1DB954,
+        "com.ubercab.UberClient" to 0xFF1C1C1E,
+        "com.ubercab.UberEats" to 0xFF06C167,
+    ).mapKeys { it.key.lowercase() }
+
+    private val categoryColorMap = mapOf(
+        AncsConstants.CATEGORY_INCOMING_CALL to 0xFF34C759,
+        AncsConstants.CATEGORY_MISSED_CALL to 0xFF34C759,
+        AncsConstants.CATEGORY_VOICEMAIL to 0xFF34C759,
+        AncsConstants.CATEGORY_SOCIAL to 0xFF0A84FF,
+        AncsConstants.CATEGORY_SCHEDULE to 0xFFFF3B30,
+        AncsConstants.CATEGORY_EMAIL to 0xFF1E88FF,
+        AncsConstants.CATEGORY_NEWS to 0xFFFF2D55,
+        AncsConstants.CATEGORY_HEALTH_FITNESS to 0xFFFF2D55,
+        AncsConstants.CATEGORY_BUSINESS_FINANCE to 0xFF5E5CE6,
+        AncsConstants.CATEGORY_LOCATION to 0xFF30B0C7,
+        AncsConstants.CATEGORY_ENTERTAINMENT to 0xFFBF5AF2,
+    )
+
+    fun colorFor(appIdentifier: String, categoryId: Int): Int =
+        (appColorMap[appIdentifier.trim().lowercase()] ?: categoryColorMap[categoryId] ?: 0xFF636366).toInt()
+
+    private val badgeCache = HashMap<String, Bitmap>()
+
+    /**
+     * Round, colored app badge (white glyph on the brand color) used as the
+     * notification's large icon and sender avatar, so every alert is recognisable at a
+     * glance the way Apple Watch shows the app icon.
+     */
+    fun badge(context: Context, appIdentifier: String, categoryId: Int, sizePx: Int = 96): Bitmap {
+        val key = "${appIdentifier.lowercase()}|$categoryId|$sizePx"
+        badgeCache[key]?.let { return it }
+        val bitmap = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = colorFor(appIdentifier, categoryId) }
+        canvas.drawCircle(sizePx / 2f, sizePx / 2f, sizePx / 2f, paint)
+        ContextCompat.getDrawable(context, getIconResId(appIdentifier, categoryId))?.mutate()?.let { glyph ->
+            glyph.setTint(android.graphics.Color.WHITE)
+            // The vectors already carry 25% padding; scale them up slightly inside the disc.
+            val inset = (sizePx * 0.06f).toInt()
+            glyph.setBounds(inset, inset, sizePx - inset, sizePx - inset)
+            glyph.draw(canvas)
+        }
+        if (badgeCache.size > 64) badgeCache.clear()
+        badgeCache[key] = bitmap
+        return bitmap
     }
 }
