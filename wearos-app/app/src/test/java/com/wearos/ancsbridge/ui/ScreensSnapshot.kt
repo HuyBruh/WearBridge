@@ -52,12 +52,12 @@ class ScreensSnapshot {
 
     @Test
     fun homeConnected() = shot {
-        HomeContent(ConnectionState.Connected("Huy's iPhone"), true, song, false, 2, rings, todayPreview, true, true, {}, {}, {}, {})
+        HomeContent(ConnectionState.Connected("Huy's iPhone"), true, song, false, 2, todayPreview, true, true, {}, {}, {}, {})
     }
 
     @Test
     fun homeDisconnected() = shot {
-        HomeContent(ConnectionState.Disconnected(), true, NowPlaying(), false, 0, rings, com.wearos.ancsbridge.model.PhoneInfo(), false, false, {}, {}, {}, {})
+        HomeContent(ConnectionState.Disconnected(), true, NowPlaying(), false, 0, com.wearos.ancsbridge.model.PhoneInfo(), false, false, {}, {}, {}, {})
     }
 
     @Test
@@ -106,13 +106,7 @@ class ScreensSnapshot {
         }
     }
 
-    private val rings = com.wearos.ancsbridge.health.Rings(
-        moveKcal = 320, moveGoal = 400, exerciseMin = 24, exerciseGoal = 30,
-        standHours = 9, standGoal = 12, steps = 8412, hasData = true
-    )
 
-    @Test
-    fun activity() = shot { ActivityContent(rings, true, {}) { _, _, _ -> } }
 
     @Test
     fun workoutGoalRing() = shot {

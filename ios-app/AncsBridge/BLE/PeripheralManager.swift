@@ -36,6 +36,9 @@ class PeripheralManager: NSObject, ObservableObject {
     private var replySnapshots: [UUID: Data] = [:]
     private var infoSnapshots: [UUID: Data] = [:]
     private var infoCharacteristic: CBMutableCharacteristic?
+    private var artworkCharacteristic: CBMutableCharacteristic?
+    private var artworkChunk: [UUID: Int] = [:]
+    private var artworkSnapshots: [UUID: Data] = [:]
     private var serviceAdded = false
     private var scanTimer: Timer?
 
@@ -267,6 +270,10 @@ class PeripheralManager: NSObject, ObservableObject {
             value: nil, permissions: [.readEncryptionRequired, .writeEncryptionRequired])
         infoCharacteristic = info
         WatchInfoProvider.shared.onChange = { [weak self] in self?.notifyInfoChanged() }
+        let artwork = CBMutableCharacteristic(type: BLEConstants.artworkUUID, properties: [.read, .write, .notify],
+            value: nil, permissions: [.readEncryptionRequired, .writeEncryptionRequired])
+        artworkCharacteristic = artwork
+        ArtworkProvider.shared.onReady = { [weak self] found in self?.notifyArtwork(found) }
         let health = CBMutableCharacteristic(type: BLEConstants.healthUUID, properties: [.write],
             value: nil, permissions: [.writeEncryptionRequired])
         let tools = CBMutableCharacteristic(type: BLEConstants.toolsUUID, properties: [.read, .write],
@@ -284,7 +291,7 @@ class PeripheralManager: NSObject, ObservableObject {
             type: BLEConstants.companionServiceUUID,
             primary: true
         )
-        companionService?.characteristics = [statusCharacteristic!, quickReplyCharacteristic, callStateCharacteristic!, draft, tools, health, replies, info]
+        companionService?.characteristics = [statusCharacteristic!, quickReplyCharacteristic, callStateCharacteristic!, draft, tools, health, replies, info, artwork]
 
         peripheralManager.add(companionService!)
         serviceAdded = true
@@ -370,6 +377,15 @@ extension PeripheralManager: CBPeripheralManagerDelegate {
             }
             request.value = Data(data.dropFirst(request.offset))
             peripheral.respond(to: request, withResult: .success)
+        } else if request.characteristic.uuid == BLEConstants.artworkUUID {
+            let key = request.central.identifier
+            if request.offset == 0 { artworkSnapshots[key] = ArtworkProvider.shared.chunk(artworkChunk[key] ?? 0) }
+            guard let data = artworkSnapshots[key], request.offset <= data.count else {
+                peripheral.respond(to: request, withResult: .invalidOffset)
+                return
+            }
+            request.value = Data(data.dropFirst(request.offset))
+            peripheral.respond(to: request, withResult: .success)
         } else if request.characteristic.uuid == BLEConstants.repliesUUID {
             let key = request.central.identifier
             if request.offset == 0 { replySnapshots[key] = QuickReplyStore.watchPayload() }
@@ -401,6 +417,23 @@ extension PeripheralManager: CBPeripheralManagerDelegate {
             }
             let done = WatchInfoProvider.shared.completeReminder(id: id)
             peripheral.respond(to: first, withResult: done ? .success : .unlikelyError)
+            return
+        }
+        if first.characteristic.uuid == BLEConstants.artworkUUID {
+            guard requests.count == 1, first.offset == 0, let data = first.value else {
+                peripheral.respond(to: first, withResult: .invalidAttributeValueLength)
+                return
+            }
+            if data.count == 2 {
+                artworkChunk[first.central.identifier] = Int(data[data.startIndex]) << 8 | Int(data[data.startIndex + 1])
+            } else if let request = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let title = request["t"] as? String {
+                ArtworkProvider.shared.request(title: title, artist: request["a"] as? String ?? "")
+            } else {
+                peripheral.respond(to: first, withResult: .invalidAttributeValueLength)
+                return
+            }
+            peripheral.respond(to: first, withResult: .success)
             return
         }
         if first.characteristic.uuid == BLEConstants.healthUUID {
@@ -509,6 +542,12 @@ extension PeripheralManager: CBPeripheralManagerDelegate {
         _ = peripheralManager.updateValue(Data([0x01]), for: info, onSubscribedCentrals: nil)
     }
 
+    /// 0x01 = artwork ready to read in chunks, 0x00 = none found for this song.
+    private func notifyArtwork(_ found: Bool) {
+        guard let artwork = artworkCharacteristic else { return }
+        _ = peripheralManager.updateValue(Data([found ? 0x01 : 0x00]), for: artwork, onSubscribedCentrals: nil)
+    }
+
     private func handleQuickReply(_ payload: String) {
         DispatchQueue.main.async {
             QuickReplyLauncher.shared.deliver(payload)
@@ -524,11 +563,14 @@ extension PeripheralManager: CBPeripheralManagerDelegate {
                characteristics.contains(where: { $0.uuid == BLEConstants.repliesUUID }),
                characteristics.contains(where: { $0.uuid == BLEConstants.infoUUID }),
                characteristics.contains(where: { $0.uuid == BLEConstants.toolsUUID }),
-               characteristics.contains(where: { $0.uuid == BLEConstants.draftUUID }) {
+               characteristics.contains(where: { $0.uuid == BLEConstants.draftUUID }),
+               characteristics.contains(where: { $0.uuid == BLEConstants.artworkUUID }) {
                 companionService = service
                 statusCharacteristic = characteristics.first { $0.uuid == BLEConstants.connectionStatusUUID } as? CBMutableCharacteristic
                 callStateCharacteristic = characteristics.first { $0.uuid == BLEConstants.callStateCharacteristicUUID } as? CBMutableCharacteristic
                 infoCharacteristic = characteristics.first { $0.uuid == BLEConstants.infoUUID } as? CBMutableCharacteristic
+                artworkCharacteristic = characteristics.first { $0.uuid == BLEConstants.artworkUUID } as? CBMutableCharacteristic
+                ArtworkProvider.shared.onReady = { [weak self] found in self?.notifyArtwork(found) }
                 WatchInfoProvider.shared.onChange = { [weak self] in self?.notifyInfoChanged() }
                 UIDevice.current.isBatteryMonitoringEnabled = true
                 serviceAdded = true

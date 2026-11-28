@@ -73,7 +73,7 @@ class PhoneMediaSession(private val context: Context, private val send: (MediaCo
         PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
     )
 
-    fun update(nowPlaying: NowPlaying, available: Boolean, commands: Set<Int>?) {
+    fun update(nowPlaying: NowPlaying, available: Boolean, commands: Set<Int>?, artwork: android.graphics.Bitmap? = null) {
         supported = commands
         current = nowPlaying
         if (!available || !nowPlaying.hasTrack) {
@@ -87,6 +87,12 @@ class PhoneMediaSession(private val context: Context, private val send: (MediaCo
                 .putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_TITLE, nowPlaying.title)
                 .putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_SUBTITLE, nowPlaying.artist)
                 .putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_DESCRIPTION, nowPlaying.player.ifBlank { "iPhone" })
+                .apply {
+                    artwork?.let {
+                        putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, it)
+                        putBitmap(MediaMetadataCompat.METADATA_KEY_DISPLAY_ICON, it)
+                    }
+                }
                 .build()
         )
         session.setPlaybackState(
@@ -106,10 +112,10 @@ class PhoneMediaSession(private val context: Context, private val send: (MediaCo
         session.isActive = true
         // Keep the controls around while paused (like Apple Watch), drop them when the
         // iPhone stops reporting a track.
-        postNotification(nowPlaying)
+        postNotification(nowPlaying, artwork)
     }
 
-    private fun postNotification(nowPlaying: NowPlaying) {
+    private fun postNotification(nowPlaying: NowPlaying, artwork: android.graphics.Bitmap?) {
         notificationManager.createNotificationChannel(
             NotificationChannel(CHANNEL, "Now Playing", NotificationManager.IMPORTANCE_LOW)
         )
@@ -121,6 +127,7 @@ class PhoneMediaSession(private val context: Context, private val send: (MediaCo
             .setContentTitle(nowPlaying.title.ifBlank { "Now Playing" })
             .setContentText(nowPlaying.artist.ifBlank { nowPlaying.player })
             .setSubText(nowPlaying.player.ifBlank { "iPhone" })
+            .setLargeIcon(artwork)
             .setContentIntent(openNowPlaying())
             .setCategory(NotificationCompat.CATEGORY_TRANSPORT)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)

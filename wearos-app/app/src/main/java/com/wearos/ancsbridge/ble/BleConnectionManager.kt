@@ -75,6 +75,11 @@ class BleConnectionManager(private val context: Context) {
         private val REPLIES_UUID = UUID.fromString("A0E3D5B9-4C6F-4E8A-9B2D-7F1E3A5C8D0B")
         /** Weather / calendar / reminders JSON; notify = "re-read me"; write = complete reminder. */
         private val INFO_UUID = UUID.fromString("A0E3D5BA-4C6F-4E8A-9B2D-7F1E3A5C8D0B")
+        /**
+         * Album artwork (AMS has none): write {"t","a"} to ask, notify 0x01 = ready / 0x00 = none,
+         * then write a 2-byte chunk index and read [count hi, count lo][JPEG bytes…].
+         */
+        private val ARTWORK_UUID = UUID.fromString("A0E3D5BB-4C6F-4E8A-9B2D-7F1E3A5C8D0B")
         private const val CHUNK_FIRST = 0x01
         private const val CHUNK_LAST = 0x02
 
@@ -334,8 +339,19 @@ class BleConnectionManager(private val context: Context) {
             AncsConstants.DATA_SOURCE_UUID -> onAttributeData(data)
             AncsConstants.CALL_STATE_CHARACTERISTIC_UUID -> _callStateEvents.tryEmit(data)
             INFO_UUID -> scope.launch { refreshInfo() }
+            ARTWORK_UUID -> if (data.firstOrNull() == 1.toByte()) scope.launch { downloadArtwork() }
+                else _artwork.value = null
             MEDIA_REMOTE_COMMAND_UUID -> supportedCommands.value = data.map { it.toInt() and 0xff }.toSet()
-            MEDIA_ENTITY_UPDATE_UUID -> _nowPlaying.value = _nowPlaying.value.withUpdate(data)
+            MEDIA_ENTITY_UPDATE_UUID -> {
+                val before = _nowPlaying.value
+                val now = before.withUpdate(data)
+                _nowPlaying.value = now
+                if (now.title != before.title || now.artist != before.artist) {
+                    artworkJob?.cancel()
+                    // Title and artist arrive as separate updates: wait for both.
+                    artworkJob = scope.launch { delay(600); requestArtwork(now.title, now.artist) }
+                }
+            }
         }
     }
 
@@ -412,6 +428,7 @@ class BleConnectionManager(private val context: Context) {
         }
         Log.i(TAG, "ANCS session active")
         repairAttempted = false
+        directTried = false
         pairingLost.value = false
         reconnectDelay = INITIAL_RECONNECT_DELAY_MS
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -446,6 +463,7 @@ class BleConnectionManager(private val context: Context) {
                 read(session, char)?.decodeToString()?.let { phoneInfo.value = it }
             }
             phoneTools.value = companion.getCharacteristic(TOOLS_UUID) != null
+            companion.getCharacteristic(ARTWORK_UUID)?.let { enableNotifications(session, it) }
         }
 
         val media = session.getService(MEDIA_SERVICE_UUID)
@@ -477,6 +495,9 @@ class BleConnectionManager(private val context: Context) {
         supportedCommands.value = null
         _mediaAvailable.value = false
         _nowPlaying.value = NowPlaying()
+        artworkJob?.cancel()
+        requestedArtworkKey = ""
+        _artwork.value = null
     }
 
     // ---- Connection lifecycle -------------------------------------------------------
@@ -493,16 +514,28 @@ class BleConnectionManager(private val context: Context) {
         openLink(device, autoConnect = false)
     }
 
-    /** Reconnect to a bonded iPhone; autoConnect lets the controller wait for it efficiently. */
-    fun reconnect(device: BluetoothDevice) {
-        if (isActiveLinkTo(device)) return
+    /**
+     * Reconnect to a bonded iPhone. The first try after losing the link (or when the app is
+     * opened, [fast]) is a direct connection, which comes up in a second or two when the
+     * iPhone is near; after that, autoConnect lets the controller wait for it efficiently.
+     */
+    fun reconnect(device: BluetoothDevice, fast: Boolean = false) {
+        val waitingInBackground = linkIsAuto && _connectionState.value !is ConnectionState.Connected
+        if (isActiveLinkTo(device) && !(fast && waitingInBackground)) return
         reconnectJob?.cancel()
         targetDevice = device
         autoReconnect = true
         userDisconnected = false
         serviceDiscoveryRetries = 0
-        openLink(device, autoConnect = true)
+        val direct = fast || !directTried
+        directTried = true
+        if (fast) reconnectDelay = 1_000L
+        openLink(device, autoConnect = !direct)
     }
+
+    /** True while the link is a background (autoConnect) wait rather than a direct attempt. */
+    private var linkIsAuto = false
+    private var directTried = false
 
     private fun isActiveLinkTo(device: BluetoothDevice): Boolean {
         val state = _connectionState.value
@@ -512,6 +545,7 @@ class BleConnectionManager(private val context: Context) {
     }
 
     private fun openLink(device: BluetoothDevice, autoConnect: Boolean) {
+        linkIsAuto = autoConnect
         endSession()
         gatt?.close()
         gatt = null
@@ -655,6 +689,51 @@ class BleConnectionManager(private val context: Context) {
         val value = read(session, char) ?: return false
         phoneInfo.value = value.decodeToString()
         return true
+    }
+
+    // ---- Album artwork --------------------------------------------------------------
+
+    private val _artwork = MutableStateFlow<android.graphics.Bitmap?>(null)
+    /** Artwork of the song playing on the iPhone, or null. */
+    val artwork: StateFlow<android.graphics.Bitmap?> = _artwork.asStateFlow()
+    private var artworkKey = ""
+    private var artworkJob: kotlinx.coroutines.Job? = null
+    private var requestedArtworkKey = ""
+    private val artworkCache = android.util.LruCache<String, android.graphics.Bitmap>(8)
+
+    /** Asks the iPhone app for the artwork of [title] by [artist]; cached per song. */
+    suspend fun requestArtwork(title: String, artist: String) {
+        val key = "$title\u0000$artist"
+        if (title.isBlank()) { artworkKey = ""; _artwork.value = null; return }
+        artworkCache.get(key)?.let { artworkKey = key; _artwork.value = it; return }
+        if (key == requestedArtworkKey) return
+        if (companionCharacteristic(ARTWORK_UUID) == null) return
+        _artwork.value = null
+        requestedArtworkKey = key
+        val request = org.json.JSONObject().put("t", title.take(120)).put("a", artist.take(120)).toString()
+        if (!companionWrite(ARTWORK_UUID, request.toByteArray())) requestedArtworkKey = ""
+    }
+
+    private suspend fun downloadArtwork() {
+        val session = gatt ?: return
+        val char = companionCharacteristic(ARTWORK_UUID) ?: return
+        val key = requestedArtworkKey
+        val out = java.io.ByteArrayOutputStream()
+        var index = 0
+        var count = 1
+        while (index < count && index < 200) {
+            if (!write(session, char, byteArrayOf((index shr 8).toByte(), index.toByte()))) return
+            val chunk = read(session, char) ?: return
+            if (chunk.size < 2) return
+            count = ((chunk[0].toInt() and 0xff) shl 8) or (chunk[1].toInt() and 0xff)
+            out.write(chunk, 2, chunk.size - 2)
+            index++
+        }
+        val bytes = out.toByteArray()
+        val bitmap = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return
+        artworkCache.put(key, bitmap)
+        if (key == requestedArtworkKey) { artworkKey = key; _artwork.value = bitmap }
+        Log.i(TAG, "Artwork ${bitmap.width}x${bitmap.height}, ${bytes.size} bytes")
     }
 
     /** Marks a reminder done on the iPhone. */

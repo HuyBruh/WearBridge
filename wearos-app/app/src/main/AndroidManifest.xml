@@ -77,19 +77,6 @@
             android:exported="true"
             android:permission="com.google.android.wearable.healthservices.permission.PASSIVE_DATA_BINDING" />
 
-        <service
-            android:name=".tiles.ActivityTileService"
-            android:exported="true"
-            android:label="Activity"
-            android:icon="@drawable/ic_fitness"
-            android:permission="com.google.android.wearable.permission.BIND_TILE_PROVIDER">
-            <intent-filter>
-                <action android:name="androidx.wear.tiles.action.BIND_TILE_PROVIDER" />
-            </intent-filter>
-            <meta-data
-                android:name="androidx.wear.tiles.PREVIEW"
-                android:resource="@drawable/ic_fitness" />
-        </service>
 
         <service
             android:name=".tiles.WorkoutTileService"
@@ -105,22 +92,6 @@
                 android:resource="@drawable/ic_fitness" />
         </service>
 
-        <service
-            android:name=".tiles.MoveComplicationService"
-            android:exported="true"
-            android:label="Move"
-            android:icon="@drawable/ic_fitness"
-            android:permission="com.google.android.wearable.permission.BIND_COMPLICATION_PROVIDER">
-            <intent-filter>
-                <action android:name="android.support.wearable.complications.ACTION_COMPLICATION_UPDATE_REQUEST" />
-            </intent-filter>
-            <meta-data
-                android:name="android.support.wearable.complications.SUPPORTED_TYPES"
-                android:value="RANGED_VALUE,SHORT_TEXT" />
-            <meta-data
-                android:name="android.support.wearable.complications.UPDATE_PERIOD_SECONDS"
-                android:value="900" />
-        </service>
 
         <service
             android:name=".tiles.PhoneBatteryComplicationService"

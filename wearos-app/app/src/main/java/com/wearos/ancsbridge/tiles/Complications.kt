@@ -13,7 +13,6 @@ import androidx.wear.watchface.complications.data.ShortTextComplicationData
 import androidx.wear.watchface.complications.datasource.ComplicationRequest
 import androidx.wear.watchface.complications.datasource.SuspendingComplicationDataSourceService
 import com.wearos.ancsbridge.R
-import com.wearos.ancsbridge.health.ActivityTracker
 import com.wearos.ancsbridge.ui.MainActivity
 
 private fun text(value: String) = PlainComplicationText.Builder(value).build()
@@ -23,31 +22,6 @@ private fun openApp(context: Context, target: String?): PendingIntent = PendingI
     Intent(context, MainActivity::class.java).apply { target?.let { putExtra(MainActivity.EXTRA_OPEN, it) } },
     PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
 )
-
-/** Move ring progress on the watch face (ranged value or short text). */
-class MoveComplicationService : SuspendingComplicationDataSourceService() {
-
-    override fun getPreviewData(type: ComplicationType): ComplicationData? = build(type, 320, 400, null)
-
-    override suspend fun onComplicationRequest(request: ComplicationRequest): ComplicationData? {
-        val rings = ActivityTracker.ringsNow(this)
-        return build(request.complicationType, rings.moveKcal, rings.moveGoal, openApp(this, MainActivity.OPEN_ACTIVITY))
-    }
-
-    private fun build(type: ComplicationType, kcal: Int, goal: Int, tap: PendingIntent?): ComplicationData? {
-        val icon = MonochromaticImage.Builder(Icon.createWithResource(this, R.drawable.ic_fitness)).build()
-        return when (type) {
-            ComplicationType.RANGED_VALUE -> RangedValueComplicationData.Builder(
-                value = kcal.coerceAtMost(goal).toFloat(), min = 0f, max = goal.toFloat(),
-                contentDescription = text("Move $kcal of $goal kilocalories")
-            ).setText(text("$kcal")).setMonochromaticImage(icon).setTapAction(tap).build()
-            ComplicationType.SHORT_TEXT -> ShortTextComplicationData.Builder(
-                text("$kcal"), text("Move $kcal of $goal kilocalories")
-            ).setTitle(text("MOVE")).setMonochromaticImage(icon).setTapAction(tap).build()
-            else -> null
-        }
-    }
-}
 
 /** The iPhone's battery level on the watch face, like Apple Watch's Batteries complication. */
 class PhoneBatteryComplicationService : SuspendingComplicationDataSourceService() {

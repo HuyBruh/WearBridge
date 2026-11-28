@@ -49,6 +49,13 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        // Opening the app is a good moment to reconnect quickly, like raising an Apple Watch.
+        if (viewModel.connectionState.value !is com.wearos.ancsbridge.model.ConnectionState.Connected &&
+            viewModel.hasBondedIPhone()) viewModel.reconnectNow()
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)

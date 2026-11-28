@@ -7,15 +7,6 @@ import androidx.wear.watchface.complications.datasource.ComplicationDataSourceUp
 
 /** Ask the system to redraw our tiles and watch-face complications. */
 object TileUpdates {
-    fun activity(context: Context) {
-        runCatching { TileService.getUpdater(context).requestUpdate(ActivityTileService::class.java) }
-        runCatching {
-            ComplicationDataSourceUpdateRequester.create(
-                context, ComponentName(context, MoveComplicationService::class.java)
-            ).requestUpdateAll()
-        }
-    }
-
     fun today(context: Context) {
         runCatching { TileService.getUpdater(context).requestUpdate(TodayTileService::class.java) }
         listOf(WeatherComplicationService::class.java, NextEventComplicationService::class.java).forEach { service ->

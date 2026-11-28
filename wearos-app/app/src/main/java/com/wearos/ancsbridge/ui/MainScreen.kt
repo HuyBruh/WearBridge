@@ -1,5 +1,8 @@
 package com.wearos.ancsbridge.ui
 
+import com.wearos.ancsbridge.ancs.AncsService
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.blur
 import android.annotation.SuppressLint
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
@@ -103,7 +106,6 @@ private object Routes {
     const val WORKOUTS = "workouts"
     const val WORKOUT_LIVE = "workout_live"
     const val WORKOUT_GOAL = "workout_goal"
-    const val ACTIVITY = "activity"
     const val MESSAGES = "messages"
     const val TODAY = "today"
     const val MESSAGES_SETUP = "messages_setup"
@@ -127,7 +129,7 @@ fun MainScreen(viewModel: MainViewModel, deepLink: String? = null, onDeepLinkHan
         val workoutRunning = viewModel.workoutState.value !is com.wearos.ancsbridge.health.WorkoutState.Idle
         when {
             link == MainActivity.OPEN_LIVE_WORKOUT && workoutRunning -> navController.navigate(Routes.WORKOUT_LIVE)
-            link == MainActivity.OPEN_ACTIVITY -> navController.navigate(Routes.ACTIVITY)
+            link == MainActivity.OPEN_ACTIVITY -> navController.navigate(Routes.HEALTH)
             link == MainActivity.OPEN_TODAY -> navController.navigate(Routes.TODAY)
             link == MainActivity.OPEN_NOW_PLAYING -> navController.navigate(Routes.NOW_PLAYING)
             link.startsWith(MainActivity.OPEN_WORKOUT_PREFIX) -> {
@@ -164,7 +166,6 @@ fun MainScreen(viewModel: MainViewModel, deepLink: String? = null, onDeepLinkHan
                 LiveWorkoutScreen(viewModel) { navController.popBackStack(Routes.HOME, inclusive = false) }
             }
             composable(Routes.HEALTH) { HealthScreen(viewModel) }
-            composable(Routes.ACTIVITY) { ActivityScreen(viewModel) }
             composable(Routes.TODAY) { TodayScreen(viewModel) }
             composable(Routes.MESSAGES) {
                 MessagesScreen(
@@ -256,8 +257,6 @@ private fun HomeScreen(viewModel: MainViewModel, navigate: (String) -> Unit) {
     val hasBonded = remember(state) { viewModel.hasBondedIPhone() }
     val workout by viewModel.workoutState.collectAsState()
     val healthPending by viewModel.healthPending.collectAsState()
-    LaunchedEffect(Unit) { viewModel.activityRingsNow() }
-    val rings by viewModel.activityRings.collectAsState()
     val context = androidx.compose.ui.platform.LocalContext.current
     LaunchedEffect(Unit) { com.wearos.ancsbridge.model.PhoneInfo.load(context) }
     val todayInfo by com.wearos.ancsbridge.model.PhoneInfo.current.collectAsState()
@@ -265,11 +264,10 @@ private fun HomeScreen(viewModel: MainViewModel, navigate: (String) -> Unit) {
         state = state, hasBonded = hasBonded, nowPlaying = nowPlaying,
         workoutActive = workout !is com.wearos.ancsbridge.health.WorkoutState.Idle,
         healthPending = healthPending,
-        rings = rings,
         todayInfo = todayInfo,
         mediaAvailable = mediaAvailable, phoneTools = phoneTools, navigate = navigate,
         onClearAll = viewModel::clearAllNotifications, onDisconnect = viewModel::disconnect,
-        onReconnect = viewModel::startService
+        onReconnect = viewModel::reconnectNow
     )
 }
 
@@ -280,7 +278,6 @@ internal fun HomeContent(
     nowPlaying: NowPlaying,
     workoutActive: Boolean,
     healthPending: Int,
-    rings: com.wearos.ancsbridge.health.Rings,
     todayInfo: com.wearos.ancsbridge.model.PhoneInfo = com.wearos.ancsbridge.model.PhoneInfo(),
     mediaAvailable: Boolean,
     phoneTools: Boolean,
@@ -307,10 +304,9 @@ internal fun HomeContent(
             NavButton(Icons.AutoMirrored.Rounded.Chat, Color(0xFF34C759), "Messages",
                 "iMessage & SMS") { navigate(Routes.MESSAGES) }
         }
-        item { ActivitySummaryButton(rings) { navigate(Routes.ACTIVITY) } }
         item {
             NavButton(Icons.Rounded.Favorite, Color(0xFFFF375F), "Apple Health",
-                if (healthPending > 0) "$healthPending waiting to sync" else "Heart rate, steps, workouts") {
+                if (healthPending > 0) "$healthPending waiting to sync" else "Steps, calories, heart rate, sleep") {
                 navigate(Routes.HEALTH)
             }
         }
@@ -468,7 +464,8 @@ internal fun IconBadge(icon: ImageVector, tint: Color) {
 private fun NowPlayingScreen(viewModel: MainViewModel) {
     val nowPlaying by viewModel.nowPlaying.collectAsState()
     val supported by viewModel.supportedCommands.collectAsState()
-    NowPlayingContent(nowPlaying, supported) { viewModel.sendMediaCommand(it.code) }
+    val artwork by AncsService.artwork.collectAsState()
+    NowPlayingContent(nowPlaying, supported, artwork) { viewModel.sendMediaCommand(it.code) }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -476,6 +473,7 @@ private fun NowPlayingScreen(viewModel: MainViewModel) {
 internal fun NowPlayingContent(
     nowPlaying: NowPlaying,
     supported: Set<Int>?,
+    artwork: android.graphics.Bitmap? = null,
     send: (MediaCommand) -> Unit,
 ) {
     val focusRequester = remember { FocusRequester() }
@@ -503,10 +501,32 @@ internal fun NowPlayingContent(
                 .focusable(),
             contentAlignment = Alignment.Center
         ) {
+            // Album art as a soft, dimmed backdrop, like Apple Watch's Now Playing.
+            val art = remember(artwork) { artwork?.asImageBitmap() }
+            if (art != null) {
+                androidx.compose.foundation.Image(
+                    art, contentDescription = null,
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize().blur(28.dp).alpha(0.5f)
+                )
+                Box(Modifier.fillMaxSize().background(
+                    androidx.compose.ui.graphics.Brush.verticalGradient(
+                        listOf(Color.Black.copy(alpha = 0.35f), Color.Black.copy(alpha = 0.75f))
+                    )
+                ))
+            }
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 22.dp)
             ) {
+                if (art != null) {
+                    androidx.compose.foundation.Image(
+                        art, contentDescription = "Album art",
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                        modifier = Modifier.size(40.dp).clip(RoundedCornerShape(8.dp))
+                    )
+                    Spacer(Modifier.height(4.dp))
+                }
                 Text(
                     nowPlaying.player.ifBlank { "iPhone" },
                     style = MaterialTheme.typography.labelSmall,

@@ -151,7 +151,7 @@ internal fun MessagesContent(
                     onClick = { openConversation(conversation.address) },
                     modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.filledTonalButtonColors(),
-                    icon = { Avatar(conversation.name, conversation.unread > 0) },
+                    icon = { Avatar(conversation.name, conversation.address, conversation.unread > 0) },
                     secondaryLabel = {
                         Text(conversation.last.let { (if (it.outgoing) "You: " else "") + it.subject },
                             maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -169,17 +169,9 @@ internal fun MessagesContent(
 }
 
 @Composable
-private fun Avatar(name: String, unread: Boolean) {
+private fun Avatar(name: String, address: String, unread: Boolean) {
     Box(contentAlignment = Alignment.TopStart) {
-        Box(
-            Modifier.size(30.dp).clip(CircleShape).background(Color(0xFF636366)),
-            contentAlignment = Alignment.Center
-        ) {
-            val initials = name.split(' ').filter { it.isNotBlank() && it[0].isLetter() }
-                .take(2).joinToString("") { it.first().uppercase() }
-            if (initials.isNotEmpty()) Text(initials, fontSize = 12.sp, color = Color.White)
-            else Icon(Icons.Rounded.Person, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
-        }
+        ContactAvatar(name = name, address = address, size = 30.dp)
         if (unread) Box(Modifier.size(9.dp).clip(CircleShape).background(MessageColors.Outgoing))
     }
 }
@@ -202,6 +194,7 @@ internal fun ConversationScreen(viewModel: MainViewModel, address: String, openR
 @Composable
 internal fun ConversationContent(name: String, conversation: Conversation?, onReply: () -> Unit) {
     ListScreen {
+        item { ContactAvatar(name = name, address = conversation?.address, size = 36.dp) }
         item { ListHeader { Text(name, maxLines = 1, overflow = TextOverflow.Ellipsis) } }
         conversation?.messages?.takeLast(25)?.forEach { message ->
             item(key = message.handle) {
@@ -348,7 +341,7 @@ internal fun ComposeContent(
             item { Text("RECENT", style = MaterialTheme.typography.labelSmall, color = Color(0xFF98989F)) }
             recent.take(5).forEach { c ->
                 item(key = "recent-" + c.address) {
-                    NavButton(Icons.Rounded.Person, Color(0xFF636366), c.name, c.address) { pick(c.address, c.name) }
+                    ContactButton(c.name, c.address, c.address) { pick(c.address, c.name) }
                 }
             }
         }
@@ -367,8 +360,8 @@ internal fun ComposeContent(
         }
         contacts.forEach { contact ->
             item(key = "c-" + contact.name + contact.addresses.firstOrNull()) {
-                NavButton(
-                    Icons.Rounded.Person, Color(0xFF636366), contact.name,
+                ContactButton(
+                    contact.name, contact.addresses.firstOrNull(),
                     if (contact.addresses.size == 1) contact.addresses.first() else "${contact.addresses.size} numbers"
                 ) {
                     if (contact.addresses.size == 1) pick(contact.addresses.first(), contact.name)
@@ -483,4 +476,16 @@ internal fun MessagesSetupContent(
         }
         item { NavButton(Icons.Rounded.LinkOff, Color(0xFF636366), "Reset Messages", null, onForget) }
     }
+}
+
+/** A row with the contact's photo (or initials), like Apple Watch's contact lists. */
+@Composable
+internal fun ContactButton(name: String, address: String?, secondary: String?, onClick: () -> Unit) {
+    Button(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        colors = ButtonDefaults.filledTonalButtonColors(),
+        icon = { ContactAvatar(name = name, address = address, size = 26.dp) },
+        secondaryLabel = secondary?.let { { Text(it, maxLines = 1, overflow = TextOverflow.Ellipsis) } },
+    ) { Text(name, maxLines = 1, overflow = TextOverflow.Ellipsis) }
 }

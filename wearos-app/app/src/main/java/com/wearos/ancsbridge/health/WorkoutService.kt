@@ -300,6 +300,7 @@ class WorkoutService : Service() {
                     .build()
             )
             resetSession()
+            WorkoutPeriods.begin(this@WorkoutService, startMs)
             getSharedPreferences(PREFS, MODE_PRIVATE).edit()
                 .putString("kind", kind.name).putLong("start", startMs)
                 .putString("goal_type", goal.type.name).putFloat("goal_target", goal.target.toFloat()).apply()
@@ -453,6 +454,7 @@ class WorkoutService : Service() {
             strideLengthM = strideLength.filter { it in 0.3..3.0 }.takeIf { it.isNotEmpty() }?.average(),
         )
         // Very short sessions are almost always accidental starts: show but don't sync.
+        WorkoutPeriods.end(this, startMs, end, synced = activeMs >= 60_000)
         if (activeMs >= 60_000) {
             HealthOutbox(this).add(record.toJson())
             ActivityTracker.onWorkout(this, startMs, end, activeMs)

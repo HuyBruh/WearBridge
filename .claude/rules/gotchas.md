@@ -66,3 +66,10 @@
 
 
 33. **"Forget This Device" on the iPhone leaves the watch with stale keys**: the watch still thinks it is bonded, so it reconnects and fails (disconnect status 5/6/0x3D) or finds no ANCS, and iOS never shows a pairing prompt. `BleConnectionManager.handlePairingLost` removes the stale bond (hidden `removeBond`) and pairs again; if that is blocked, it stops reconnecting and asks the user to remove the iPhone in the watch's Bluetooth settings. Pair iPhone › Forget iPhone does the same by hand. The iPhone app advertises whenever it is in the foreground so Search finds it.
+
+34. **vCard base64 lines can end with "="**: unfolding quoted-printable soft breaks (`=\r\n`) on the whole text glued a photo's padding to `END:VCARD`, losing the contact. Only QP properties are soft-unfolded now.
+
+35. **Workouts and all-day data overlap in Apple Health**: both came from WearBridge, so Health summed the workout's steps/kcal with the passive steps/kcal for the same minutes. Passive samples are trimmed to time outside workouts (`WorkoutPeriods`), including a workout still running.
+
+36. **Third-party replies need Apple's Notification Forwarding**: the AccessoryNotifications framework (iOS 26.5+) carries text replies for any app, but needs AccessorySetupKit pairing, three app extensions with Apple-managed entitlements (`accessory-data-provider`, `accessory-transport-security`, `accessory-transport-extension`) and is EU-only for customer installs. Not available to a sideloaded build; chat apps keep the iPhone draft fallback.
+

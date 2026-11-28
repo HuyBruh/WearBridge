@@ -85,6 +85,8 @@ object PassiveRecord {
         steps: List<Triple<Long, Long, Double>>,
         distance: List<Triple<Long, Long, Double>> = emptyList(),
         floors: List<Triple<Long, Long, Double>> = emptyList(),
+        activeEnergy: List<Triple<Long, Long, Double>> = emptyList(),
+        basalEnergy: List<Triple<Long, Long, Double>> = emptyList(),
     ): JSONObject = JSONObject().apply {
         put("type", "samples")
         put("v", 1)
@@ -96,7 +98,13 @@ object PassiveRecord {
         put("steps", intervals(steps))
         put("distance", intervals(distance))
         put("floors", intervals(floors))
+        // kcal, for Apple Health's Active Energy (Move ring in Fitness) and Resting Energy.
+        put("active", intervals(activeEnergy))
+        put("basal", intervals(basalEnergy))
     }
+
+    fun hasData(record: JSONObject): Boolean =
+        listOf("hr", "steps", "distance", "floors", "active", "basal").any { (record.optJSONArray(it)?.length() ?: 0) > 0 }
 
     /** A finished sleep period plus the resting heart rate measured during it. */
     fun sleepJson(interval: Pair<Long, Long>, restingBpm: Int?): JSONObject = JSONObject().apply {

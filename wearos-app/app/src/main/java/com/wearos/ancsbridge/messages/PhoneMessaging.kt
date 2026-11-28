@@ -56,7 +56,7 @@ object PhoneMessaging {
     private const val PBAP_MAX_LIST_COUNT = 0x04
     private const val PBAP_PROPERTY_SELECTOR = 0x06
     /** VERSION, FN, N, TEL, EMAIL. */
-    private const val PBAP_PROPERTIES = 0x187L
+    private const val PBAP_PROPERTIES = 0x18FL
 
     sealed interface Status {
         data object NotSetUp : Status
@@ -270,7 +270,8 @@ object PhoneMessaging {
                 MapFormats.parseVCards(response.body().toString(Charsets.UTF_8))
             }
         } ?: return false
-        _contacts.value = contacts
+        runCatching { Avatars.store(context, contacts) }.onFailure { Log.w(TAG, "Contact photos failed", it) }
+        _contacts.value = contacts.map { it.copy(photo = null) }
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putString("contacts", encodeContacts(contacts)).apply()
         _conversations.value = MapFormats.conversations(_conversations.value.flatMap { it.messages }, contacts)

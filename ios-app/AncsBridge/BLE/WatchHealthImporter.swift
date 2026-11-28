@@ -30,7 +30,7 @@ final class WatchHealthImporter: ObservableObject {
         var types: Set<HKSampleType> = [HKObjectType.workoutType(), HKSeriesType.workoutRoute()]
         let ids: [HKQuantityTypeIdentifier] = [
             .heartRate, .activeEnergyBurned, .distanceWalkingRunning, .distanceCycling, .stepCount,
-            .flightsClimbed, .restingHeartRate, .vo2Max,
+            .flightsClimbed, .restingHeartRate, .vo2Max, .basalEnergyBurned,
             .runningGroundContactTime, .runningVerticalOscillation, .runningStrideLength
         ]
         for id in ids { types.insert(HKQuantityType(id)) }
@@ -39,6 +39,14 @@ final class WatchHealthImporter: ObservableObject {
     }
 
     static var isEnabled: Bool { UserDefaults.standard.bool(forKey: enabledKey) }
+
+    /// Asks again for types added in an update (such as Resting Energy) while sync is on.
+    func requestNewTypesIfNeeded() async {
+        guard Self.isEnabled, HKHealthStore.isHealthDataAvailable() else { return }
+        let missing = Self.shareTypes.contains { store.authorizationStatus(for: $0) == .notDetermined }
+        guard missing else { return }
+        try? await store.requestAuthorization(toShare: Self.shareTypes, read: [])
+    }
 
     private init() {
         directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -381,6 +389,9 @@ final class WatchHealthImporter: ObservableObject {
         let intervalTypes: [(String, HKQuantityTypeIdentifier, HKUnit)] = [
             ("distance", .distanceWalkingRunning, .meter()),
             ("floors", .flightsClimbed, .count()),
+            // Active Energy feeds the Move ring in the iPhone Fitness app; Resting Energy completes the total.
+            ("active", .activeEnergyBurned, .kilocalorie()),
+            ("basal", .basalEnergyBurned, .kilocalorie()),
         ]
         for (key, identifier, unit) in intervalTypes {
             for interval in record[key] as? [[NSNumber]] ?? [] where interval.count >= 3 {

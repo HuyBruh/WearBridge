@@ -99,6 +99,9 @@ class AncsService : Service() {
         val sessionStats = MutableStateFlow(SessionStats())
         private val _nowPlaying = MutableStateFlow(NowPlaying())
         val nowPlaying: StateFlow<NowPlaying> = _nowPlaying.asStateFlow()
+        private val _artwork = MutableStateFlow<android.graphics.Bitmap?>(null)
+        /** Album artwork of the iPhone's current song, fetched by the iPhone app. */
+        val artwork: StateFlow<android.graphics.Bitmap?> = _artwork.asStateFlow()
     }
 
     data class SessionStats(val received: Int = 0, val posted: Int = 0, val timeouts: Int = 0)
@@ -222,11 +225,16 @@ class AncsService : Service() {
         }
         scope.launch {
             kotlinx.coroutines.flow.combine(
-                connectionManager.nowPlaying, connectionManager.mediaAvailable, connectionManager.supportedCommands
-            ) { playing, available, commands -> Triple(playing, available, commands) }
-                .collect { (playing, available, commands) ->
+                connectionManager.nowPlaying, connectionManager.mediaAvailable,
+                connectionManager.supportedCommands, connectionManager.artwork
+            ) { playing, available, commands, art -> listOf(playing, available, commands, art) }
+                .collect { values ->
+                    val playing = values[0] as com.wearos.ancsbridge.ble.NowPlaying
+                    @Suppress("UNCHECKED_CAST")
+                    mediaSession?.update(playing, values[1] as Boolean, values[2] as Set<Int>?,
+                        values[3] as android.graphics.Bitmap?)
                     _nowPlaying.value = playing
-                    mediaSession?.update(playing, available, commands)
+                    _artwork.value = values[3] as android.graphics.Bitmap?
                 }
         }
 
@@ -280,7 +288,8 @@ class AncsService : Service() {
                 connectionManager.disconnect()
             }
             ACTION_RECONNECT -> {
-                tryReconnectBonded()
+                // The app came to the foreground or the user tapped Reconnect: try right away.
+                tryReconnectBonded(fast = true)
             }
             ACTION_PERFORM_NOTIFICATION_ACTION -> {
                 val uid = intent.getLongExtra(NotificationActionReceiver.EXTRA_NOTIFICATION_UID, -1)
@@ -489,11 +498,11 @@ class AncsService : Service() {
         }
     }
 
-    private fun tryReconnectBonded() {
+    private fun tryReconnectBonded(fast: Boolean = false) {
         val device = connectionManager.getBondedIPhone()
         if (device != null) {
             Log.i(TAG, "Found bonded device: ${device.name ?: device.address}")
-            connectionManager.reconnect(device)
+            connectionManager.reconnect(device, fast)
         } else {
             Log.i(TAG, "No bonded iPhone found")
         }
@@ -758,9 +767,16 @@ class AncsService : Service() {
         val notifTime = parseAncsDate(notification.date)
 
         val badge = AppIconMapper.badge(this, notification.appIdentifier, notification.categoryId)
+        // The sender's photo from the iPhone's contacts, like Apple Watch shows it.
+        val avatar = if (notification.categoryId == AncsConstants.CATEGORY_SOCIAL ||
+            notification.categoryId == AncsConstants.CATEGORY_MISSED_CALL ||
+            notification.categoryId == AncsConstants.CATEGORY_VOICEMAIL ||
+            notification.categoryId == AncsConstants.CATEGORY_EMAIL ||
+            notification.categoryId == AncsConstants.CATEGORY_INCOMING_CALL
+        ) com.wearos.ancsbridge.messages.Avatars.forName(this, notification.title)?.let(com.wearos.ancsbridge.messages.Avatars::circle) else null
         val builder = NotificationCompat.Builder(this, channelId)
             .setSmallIcon(iconResId)
-            .setLargeIcon(badge)
+            .setLargeIcon(avatar ?: badge)
             .setColor(AppIconMapper.colorFor(notification.appIdentifier, notification.categoryId))
             .setContentTitle(senderName)
             .setContentText(messagePreview)
@@ -793,7 +809,7 @@ class AncsService : Service() {
         if (messagePreview.isNotEmpty()) {
             val person = androidx.core.app.Person.Builder()
                 .setName(senderName)
-                .setIcon(androidx.core.graphics.drawable.IconCompat.createWithBitmap(badge))
+                .setIcon(androidx.core.graphics.drawable.IconCompat.createWithBitmap(avatar ?: badge))
                 .build()
             builder.setStyle(
                 NotificationCompat.MessagingStyle(person)
@@ -947,6 +963,11 @@ class AncsService : Service() {
         val caller = androidx.core.app.Person.Builder()
             .setName(callerName)
             .setImportant(true)
+            .apply {
+                com.wearos.ancsbridge.messages.Avatars.forName(this@AncsService, callerName)?.let {
+                    setIcon(androidx.core.graphics.drawable.IconCompat.createWithBitmap(com.wearos.ancsbridge.messages.Avatars.circle(it)))
+                }
+            }
             .build()
         val callNotification = NotificationCompat.Builder(this, AncsApplication.CHANNEL_INCOMING_CALL)
             .setSmallIcon(R.drawable.ic_phone)

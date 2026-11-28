@@ -17,8 +17,6 @@ import androidx.wear.tiles.TileBuilders
 import androidx.wear.tiles.TileService
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
-import com.wearos.ancsbridge.health.ActivityTracker
-import com.wearos.ancsbridge.health.Rings
 import com.wearos.ancsbridge.health.WorkoutKind
 import com.wearos.ancsbridge.ui.MainActivity
 
@@ -67,65 +65,6 @@ internal object TileStyle {
 
     fun resources(): ListenableFuture<ResourceBuilders.Resources> =
         Futures.immediateFuture(ResourceBuilders.Resources.Builder().setVersion("1").build())
-}
-
-/** Activity rings tile: Move, Exercise and Stand, like Apple Watch's Activity rings. */
-class ActivityTileService : TileService() {
-
-    override fun onTileRequest(requestParams: RequestBuilders.TileRequest): ListenableFuture<TileBuilders.Tile> {
-        val rings = ActivityTracker.ringsNow(this)
-        return Futures.immediateFuture(TileStyle.tile(layout(rings), 15 * 60_000L))
-    }
-
-    override fun onTileResourcesRequest(requestParams: RequestBuilders.ResourcesRequest) = TileStyle.resources()
-
-    private fun ring(progress: Float, color: Int, sizeDp: Float, thickness: Float): LayoutElementBuilders.LayoutElement {
-        val sweep = (progress.coerceIn(0f, 1f) * 360f).coerceAtLeast(1f)
-        fun arc(length: Float, c: Int) = LayoutElementBuilders.Arc.Builder()
-            .setAnchorAngle(degrees(0f))
-            .setAnchorType(LayoutElementBuilders.ARC_ANCHOR_START)
-            .addContent(
-                LayoutElementBuilders.ArcLine.Builder()
-                    .setLength(degrees(length)).setThickness(dp(thickness)).setColor(argb(c)).build()
-            ).build()
-        return LayoutElementBuilders.Box.Builder()
-            .setWidth(dp(sizeDp)).setHeight(dp(sizeDp))
-            .addContent(arc(360f, TileStyle.dim(color)))
-            .addContent(arc(sweep, color))
-            .build()
-    }
-
-    private fun layout(rings: Rings): LayoutElementBuilders.LayoutElement {
-        val ringsBox = LayoutElementBuilders.Box.Builder()
-            .setWidth(dp(96f)).setHeight(dp(96f))
-            .addContent(ring(rings.move, TileStyle.MOVE, 96f, 11f))
-            .addContent(ring(rings.exercise, TileStyle.EXERCISE, 70f, 11f))
-            .addContent(ring(rings.stand, TileStyle.STAND, 44f, 11f))
-            .build()
-
-        val column = LayoutElementBuilders.Column.Builder()
-            .setWidth(wrap()).setHeight(wrap())
-            .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER)
-            .addContent(ringsBox)
-            .addContent(LayoutElementBuilders.Spacer.Builder().setHeight(dp(6f)).build())
-        if (rings.hasData) {
-            column
-                .addContent(TileStyle.text("${rings.moveKcal}/${rings.moveGoal} KCAL", TileStyle.MOVE, 13f, bold = true))
-                .addContent(TileStyle.text("${rings.exerciseMin}/${rings.exerciseGoal} MIN", TileStyle.EXERCISE, 13f, bold = true))
-                .addContent(TileStyle.text("${rings.standHours}/${rings.standGoal} HRS", TileStyle.STAND, 13f, bold = true))
-        } else {
-            column.addContent(TileStyle.text("Tap to turn on Activity", TileStyle.GREY, 12f))
-        }
-
-        return LayoutElementBuilders.Box.Builder()
-            .setWidth(expand()).setHeight(expand())
-            .setModifiers(
-                ModifiersBuilders.Modifiers.Builder()
-                    .setClickable(TileStyle.launch(this, MainActivity.OPEN_ACTIVITY, "open_activity")).build()
-            )
-            .addContent(column.build())
-            .build()
-    }
 }
 
 /** One-tap workouts, like the Workout app in Apple Watch's Smart Stack. */

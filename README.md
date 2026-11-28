@@ -25,7 +25,8 @@ iPhone (iOS 26)                       Wear OS Watch
 - **Now Playing** — play/pause, next/previous and crown-controlled volume for whatever plays on the iPhone (Apple Media Service)
 - **Workouts → Apple Health** — Apple Workout-style app (walk, run, cycle, HIIT, strength, yoga…) with live heart rate, calories, distance, pace and GPS route; saved to Apple Health with route, heart rate and pauses
 - **All-day heart rate & steps → Apple Health** (opt-in), queued on the watch until the iPhone app stores them
-- **Activity rings** — Move, Exercise and Stand in the app, an Activity tile and a Move complication
+- **Apple Health & Fitness sync** — steps, distance, floors, active/resting calories, heart rate and sleep from the Pixel go to Apple Health; the iPhone Fitness app's Move ring uses them
+- **Contact photos & album art** — sender photos on notifications, calls and Messages; artwork on Now Playing
 - **Workout goals & splits** — time/distance/calorie goals with a progress ring, km split taps, segments
 - **Tiles & complications** — one-tap Workout tile, iPhone battery complication
 - **Quick replies from your iPhone list** — on the call screen and as reply chips on Messages alerts

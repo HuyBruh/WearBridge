@@ -163,3 +163,29 @@ class TodayAndSleepTest {
         assertEquals(55, sleep.getJSONArray("resting").getJSONArray(0).getInt(1))
     }
 }
+
+class WorkoutPeriodsTest {
+    @Test
+    fun trimsTimeInsideWorkouts() {
+        val steps = listOf(Triple(0L, 600_000L, 600.0), Triple(600_000L, 1_200_000L, 300.0))
+        val out = WorkoutPeriods.outside(steps, listOf(300_000L to 900_000L))
+        org.junit.Assert.assertEquals(300.0, out[0].third, 0.01)
+        org.junit.Assert.assertEquals(150.0, out[1].third, 0.01)
+    }
+
+    @Test
+    fun dropsIntervalsFullyInsideActiveWorkout() {
+        val out = WorkoutPeriods.outside(listOf(Triple(1_000L, 2_000L, 50.0)), listOf(500L to Long.MAX_VALUE))
+        org.junit.Assert.assertTrue(out.isEmpty())
+    }
+
+    @Test
+    fun splitsCaloriesIntoActiveAndResting() {
+        val (active, basal) = WorkoutPeriods.splitEnergy(listOf(Triple(0L, 10 * 60_000L, 20.0)), 1.2)
+        org.junit.Assert.assertEquals(12.0, basal.single().third, 0.01)
+        org.junit.Assert.assertEquals(8.0, active.single().third, 0.01)
+        val (quietActive, quietBasal) = WorkoutPeriods.splitEnergy(listOf(Triple(0L, 10 * 60_000L, 10.0)), 1.2)
+        org.junit.Assert.assertTrue(quietActive.isEmpty())
+        org.junit.Assert.assertEquals(10.0, quietBasal.single().third, 0.01)
+    }
+}

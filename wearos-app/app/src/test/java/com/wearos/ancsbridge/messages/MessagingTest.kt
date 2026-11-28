@@ -119,3 +119,37 @@ class MessagingTest {
         assertEquals(ObexClient.HI_BODY, headers.single().id)
     }
 }
+
+class ContactPhotoTest {
+    private val jpeg = ByteArray(200) { (it * 7).toByte() }
+    private val b64 = java.util.Base64.getEncoder().encodeToString(jpeg)
+
+    @Test
+    fun photoFoldedWithSpaces() {
+        val folded = b64.chunked(60).joinToString("\r\n  ")
+        val vcard = "BEGIN:VCARD\r\nVERSION:2.1\r\nFN:Anna\r\nTEL;CELL:+84901234567\r\n" +
+            "PHOTO;ENCODING=BASE64;TYPE=JPEG:$folded\r\n\r\nEND:VCARD\r\n"
+        val contact = MapFormats.parseVCards(vcard).single()
+        assertArrayEquals(jpeg, contact.photo)
+    }
+
+    @Test
+    fun photoOnUnindentedLines() {
+        val lines = b64.chunked(60).joinToString("\r\n")
+        val vcard = "BEGIN:VCARD\r\nVERSION:2.1\r\nN:Tran;Binh;;;\r\nPHOTO;ENCODING=BASE64;TYPE=JPEG:\r\n$lines\r\n\r\n" +
+            "TEL;CELL:0901234567\r\nEND:VCARD\r\n"
+        val contact = MapFormats.parseVCards(vcard).single()
+        assertEquals("Binh Tran", contact.name)
+        assertEquals(listOf("0901234567"), contact.phones)
+        assertArrayEquals(jpeg, contact.photo)
+    }
+
+    @Test
+    fun vcard30PhotoAndNoPhoto() {
+        val vcard = "BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Cuong\r\nTEL:111\r\nPHOTO;ENCODING=b;TYPE=JPEG:$b64\r\nEND:VCARD\r\n" +
+            "BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Dung\r\nTEL:222\r\nEND:VCARD\r\n"
+        val contacts = MapFormats.parseVCards(vcard)
+        assertArrayEquals(jpeg, contacts.first { it.name == "Cuong" }.photo)
+        assertEquals(null, contacts.first { it.name == "Dung" }.photo)
+    }
+}

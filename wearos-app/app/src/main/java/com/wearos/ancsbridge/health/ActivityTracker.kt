@@ -132,6 +132,11 @@ object ActivityTracker {
         ).also { _rings.value = it }
     }
 
+    /** Learned resting burn, kcal per minute. */
+    fun restingPerMin(context: Context): Double =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getFloat("resting", DEFAULT_RESTING_PER_MIN.toFloat()).toDouble()
+
     @Synchronized
     fun onPassiveData(
         context: Context,

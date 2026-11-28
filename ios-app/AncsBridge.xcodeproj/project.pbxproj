@@ -25,6 +25,7 @@
 		C64BBEB053EDA70670D3A4F7 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE23C48EE7171805E83E7C74 /* SettingsView.swift */; };
 		E0FE400394C388A4F3E3D11E /* PeripheralManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CD7E830A5834A54112C3678 /* PeripheralManager.swift */; };
 		C1D2E3F4A5B6C7D8E9F0A1B2 /* WatchInfoProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1E2F3A4B5C6D7E8F9A0B1C2 /* WatchInfoProvider.swift */; };
+		C2D3E4F5A6B7C8D9E0F1A2B3 /* ArtworkProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2E3F4A5B6C7D8E9F0A1B2C3 /* ArtworkProvider.swift */; };
 		A1B2C3D4E5F6071829304A5B /* WatchHealthImporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1C2D3E4F5061728394A5B6C /* WatchHealthImporter.swift */; };
 		EE03FF684C5486654CB942D5 /* AncsBridgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5DAFE504FCCF42292D6F4FE8 /* AncsBridgeTests.swift */; };
 /* End PBXBuildFile section */
@@ -47,6 +48,7 @@
 		4027EE6B08DD2500C1BF6E94 /* BLEConstants.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BLEConstants.swift; sourceTree = "<group>"; };
 		4CD7E830A5834A54112C3678 /* PeripheralManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PeripheralManager.swift; sourceTree = "<group>"; };
 		D1E2F3A4B5C6D7E8F9A0B1C2 /* WatchInfoProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchInfoProvider.swift; sourceTree = "<group>"; };
+		D2E3F4A5B6C7D8E9F0A1B2C3 /* ArtworkProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtworkProvider.swift; sourceTree = "<group>"; };
 		B1C2D3E4F5061728394A5B6C /* WatchHealthImporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchHealthImporter.swift; sourceTree = "<group>"; };
 		8C2D3E4F50617283940A1B2C /* QuickReplyLauncher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickReplyLauncher.swift; sourceTree = "<group>"; };
 		523A43621478CD12C73CC964 /* Info-Generated.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = "Info-Generated.plist"; sourceTree = "<group>"; };
@@ -147,6 +149,7 @@
 				DDDD1DF5401A97F3ECA524FC /* CallStateObserver.swift */,
 				4CD7E830A5834A54112C3678 /* PeripheralManager.swift */,
 				D1E2F3A4B5C6D7E8F9A0B1C2 /* WatchInfoProvider.swift */,
+				D2E3F4A5B6C7D8E9F0A1B2C3 /* ArtworkProvider.swift */,
 				B1C2D3E4F5061728394A5B6C /* WatchHealthImporter.swift */,
 				8C2D3E4F50617283940A1B2C /* QuickReplyLauncher.swift */,
 			);
@@ -262,6 +265,7 @@
 				25BCDC2B3260F8615BAF50A9 /* PairedDevice.swift in Sources */,
 				E0FE400394C388A4F3E3D11E /* PeripheralManager.swift in Sources */,
 				C1D2E3F4A5B6C7D8E9F0A1B2 /* WatchInfoProvider.swift in Sources */,
+				C2D3E4F5A6B7C8D9E0F1A2B3 /* ArtworkProvider.swift in Sources */,
 				A1B2C3D4E5F6071829304A5B /* WatchHealthImporter.swift in Sources */,
 				7B1C2D3E4F50617283940A1B /* QuickReplyLauncher.swift in Sources */,
 				BADFA7CC5AEE06DFBD06B68F /* QuickReplySettingsView.swift in Sources */,
@@ -452,14 +456,14 @@
 				CODE_SIGN_ENTITLEMENTS = AncsBridge/AncsBridge.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 7;
+				CURRENT_PROJECT_VERSION = 8;
 				DEVELOPMENT_TEAM = R68RHN3HF5;
 				INFOPLIST_FILE = "AncsBridge/Info-Generated.plist";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.7;
+				MARKETING_VERSION = 1.8;
 				PRODUCT_BUNDLE_IDENTIFIER = com.wearos.ancsbridge.companion;
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 5.9;
@@ -475,14 +479,14 @@
 				CODE_SIGN_ENTITLEMENTS = AncsBridge/AncsBridge.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Distribution";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 7;
+				CURRENT_PROJECT_VERSION = 8;
 				DEVELOPMENT_TEAM = R68RHN3HF5;
 				INFOPLIST_FILE = "AncsBridge/Info-Generated.plist";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.7;
+				MARKETING_VERSION = 1.8;
 				PRODUCT_BUNDLE_IDENTIFIER = com.wearos.ancsbridge.companion;
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 5.9;

@@ -14,7 +14,10 @@ struct AncsBridgeApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(bleViewModel)
-                .task { QuickReplyLauncher.shared.requestAuthorization() }
+                .task {
+                    QuickReplyLauncher.shared.requestAuthorization()
+                    await WatchHealthImporter.shared.requestNewTypesIfNeeded()
+                }
         }
         .onChange(of: scenePhase) { _, phase in
             bleViewModel.peripheralManager.inForeground = phase == .active

@@ -286,7 +286,7 @@ internal fun LiveWorkoutContent(
                 onSegment(); scope.launch { pagerState.animateScrollToPage(1) }
             })
             1 -> WorkoutMetrics(state)
-            else -> nowPlaying?.let { NowPlayingContent(it, supportedCommands, sendMedia) }
+            else -> nowPlaying?.let { NowPlayingContent(it, supportedCommands, send = sendMedia) }
         }
     }
 }

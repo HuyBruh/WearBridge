@@ -94,10 +94,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .setAction(AncsService.ACTION_COMPLETE_REMINDER).putExtra("id", id))
     }
 
-    val activityRings = com.wearos.ancsbridge.health.ActivityTracker.rings
-    fun activityRingsNow() = com.wearos.ancsbridge.health.ActivityTracker.ringsNow(getApplication())
-    fun setActivityGoals(move: Int, exercise: Int, stand: Int) =
-        com.wearos.ancsbridge.health.ActivityTracker.setGoals(getApplication(), move, exercise, stand)
     fun markSegment() = com.wearos.ancsbridge.health.WorkoutService.segment(getApplication())
     fun pauseWorkout() = com.wearos.ancsbridge.health.WorkoutService.pause(getApplication())
     fun resumeWorkout() = com.wearos.ancsbridge.health.WorkoutService.resume(getApplication())
@@ -151,24 +147,44 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         discoveredAppleDevices.clear()
 
         scanJob = viewModelScope.launch {
+            // Meanwhile, note iPhones nearby (Apple "Nearby Info" adverts) as a fallback for
+            // when the WearBridge app isn't open: ANCS works without it.
+            val nearby = java.util.concurrent.ConcurrentHashMap<String, android.bluetooth.le.ScanResult>()
+            val appleScan = launch {
+                runCatching {
+                    scanner.scan().collect { result ->
+                        val apple = result.scanRecord?.getManufacturerSpecificData(0x004C)
+                        if (result.isConnectable && apple != null && apple.isNotEmpty() && apple[0] == 0x10.toByte()) {
+                            nearby[result.device.address] = result
+                        }
+                    }
+                }
+            }
             val result = try {
-                // The iPhone app advertises while it is open (Add New Watch).
-                kotlinx.coroutines.withTimeoutOrNull(20_000) { scanner.scanForCompanion().first() }
+                // The iPhone app advertises whenever it is open.
+                kotlinx.coroutines.withTimeoutOrNull(12_000) { scanner.scanForCompanion().first() }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
-                _scanStatus.value = "Bluetooth scan failed. Turn Bluetooth off and on, then try again."
-                _isScanning.value = false
-                return@launch
+                null
+            } finally {
+                appleScan.cancel()
             }
             _isScanning.value = false
-            if (result == null) {
-                _scanStatus.value = "iPhone not found. On iPhone open WearBridge › Add New Watch, keep it on screen, then Search again."
+            if (result != null) {
+                Log.i("MainViewModel", "Found companion: ${result.device.address} rssi=${result.rssi}")
+                _scanStatus.value = "Found iPhone. Connecting…"
+                connectToDevice(result.device.address)
                 return@launch
             }
-            Log.i("MainViewModel", "Found companion: ${result.device.address} rssi=${result.rssi}")
-            _scanStatus.value = "Found iPhone. Connecting…"
-            connectToDevice(result.device.address)
+            val closest = nearby.values.filter { it.rssi >= -62 }.maxByOrNull { it.rssi }
+            if (closest != null) {
+                Log.i("MainViewModel", "Trying nearby Apple device ${closest.device.address} rssi=${closest.rssi}")
+                _scanStatus.value = "Connecting to the iPhone next to you… Accept the pairing request on the iPhone."
+                connectToDevice(closest.device.address)
+                return@launch
+            }
+            _scanStatus.value = "iPhone not found. Open the WearBridge app on your iPhone (or hold the watch right next to it), then Search again."
         }
     }
 
@@ -254,6 +270,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             action = AncsService.ACTION_START
         }
         context.startForegroundService(intent)
+    }
+
+    /** Direct (fast) reconnect to the bonded iPhone. */
+    fun reconnectNow() {
+        val context = getApplication<Application>()
+        runCatching {
+            context.startForegroundService(Intent(context, AncsService::class.java).setAction(AncsService.ACTION_RECONNECT))
+        }
     }
 
     fun stopService() {

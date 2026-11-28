@@ -228,12 +228,7 @@ fun IncomingCallScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Text(
-            text = appName,
-            fontSize = 12.sp,
-            color = Color.Gray,
-            textAlign = TextAlign.Center
-        )
+        ContactAvatar(name = callerName, size = 40.dp)
 
         Spacer(modifier = Modifier.height(4.dp))
 
@@ -248,7 +243,7 @@ fun IncomingCallScreen(
         Spacer(modifier = Modifier.height(4.dp))
 
         Text(
-            text = "Incoming Call",
+            text = "$appName · Incoming Call",
             fontSize = 12.sp,
             color = Color.Gray,
             textAlign = TextAlign.Center

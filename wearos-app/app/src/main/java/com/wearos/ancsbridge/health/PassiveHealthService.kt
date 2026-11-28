@@ -37,12 +37,25 @@ class PassiveHealthService : PassiveListenerService() {
         val distance = DailyDeltas(this, "distance").consume(intervals(dataPoints.getData(DataType.DISTANCE_DAILY)))
         val floors = DailyDeltas(this, "floors").consume(intervals(dataPoints.getData(DataType.FLOORS_DAILY)))
         val calories = intervals(dataPoints.getData(DataType.CALORIES_DAILY))
+        val calorieDeltas = DailyDeltas(this, "calories").consume(calories)
 
+        // Learns the wearer's resting burn from quiet periods.
         ActivityTracker.onPassiveData(this, steps, calories)
         SleepTracker.addHeartRate(this, heartRate)
 
-        if (heartRate.isEmpty() && steps.isEmpty() && distance.isEmpty() && floors.isEmpty()) return
-        HealthOutbox(this).add(PassiveRecord.toJson(heartRate, steps, distance, floors))
+        // Workouts write their own samples: send only what happened outside them.
+        val workouts = WorkoutPeriods.periods(this)
+        val (active, basal) = WorkoutPeriods.splitEnergy(calorieDeltas, ActivityTracker.restingPerMin(this))
+        val record = PassiveRecord.toJson(
+            heartRate = WorkoutPeriods.pointsOutside(heartRate, workouts),
+            steps = WorkoutPeriods.outside(steps, workouts),
+            distance = WorkoutPeriods.outside(distance, workouts),
+            floors = floors,
+            activeEnergy = WorkoutPeriods.outside(active, workouts),
+            basalEnergy = basal,
+        )
+        if (!PassiveRecord.hasData(record)) return
+        HealthOutbox(this).add(record)
         startService(Intent(this, AncsService::class.java).setAction(AncsService.ACTION_SYNC_HEALTH))
     }
 

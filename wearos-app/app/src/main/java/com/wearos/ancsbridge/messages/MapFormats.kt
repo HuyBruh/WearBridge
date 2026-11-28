@@ -22,7 +22,13 @@ data class MapMessage(
     val peerName: String get() = (if (outgoing) recipientName else senderName).ifBlank { peerAddress }
 }
 
-data class Contact(val name: String, val phones: List<String>, val emails: List<String>) {
+data class Contact(
+    val name: String,
+    val phones: List<String>,
+    val emails: List<String>,
+    /** JPEG/PNG bytes from the vCard PHOTO property; not cached in prefs (see [Avatars]). */
+    val photo: ByteArray? = null,
+) {
     val addresses: List<String> get() = phones + emails
 }
 
@@ -157,22 +163,32 @@ object MapFormats {
 
     fun parseVCards(text: String): List<Contact> {
         // Unfold continuation lines (RFC 2425 folding and quoted-printable soft breaks).
-        val unfolded = text.replace("=\r\n", "").replace("=\n", "")
-            .replace(Regex("\r?\n[ \t]"), "")
+        val unfolded = unfoldQuotedPrintable(text.replace(Regex("\r?\n[ \t]"), ""))
         val contacts = mutableListOf<Contact>()
         var name = ""
         var structured = ""
         var phones = mutableListOf<String>()
         var emails = mutableListOf<String>()
+        var photo: ByteArray? = null
+        var photoKey: String? = null
+        val photoData = StringBuilder()
         for (raw in unfolded.lines()) {
             val line = raw.trimEnd('\r')
             val colon = line.indexOf(':')
+            // vCard 2.1 base64 may continue on unindented lines until a blank line.
+            if (photoKey != null && colon <= 0) {
+                if (line.isBlank()) { photo = decodePhoto(photoKey!!, photoData.toString()); photoKey = null }
+                else photoData.append(line.trim())
+                continue
+            }
+            if (photoKey != null) { photo = decodePhoto(photoKey!!, photoData.toString()); photoKey = null }
             if (colon <= 0) continue
             val key = line.substring(0, colon)
             val value = decodeValue(key, line.substring(colon + 1))
             val property = key.substringBefore(';').uppercase()
             when (property) {
-                "BEGIN" -> { name = ""; structured = ""; phones = mutableListOf(); emails = mutableListOf() }
+                "BEGIN" -> { name = ""; structured = ""; phones = mutableListOf(); emails = mutableListOf(); photo = null }
+                "PHOTO" -> { photoKey = key; photoData.setLength(0); photoData.append(line.substring(colon + 1)) }
                 "FN" -> name = value.trim()
                 "N" -> structured = value.split(';').let { parts ->
                     listOfNotNull(parts.getOrNull(1), parts.getOrNull(2), parts.getOrNull(0))
@@ -183,12 +199,41 @@ object MapFormats {
                 "END" -> {
                     val display = name.ifBlank { structured }.ifBlank { phones.firstOrNull() ?: emails.firstOrNull() ?: "" }
                     if (display.isNotBlank() && (phones.isNotEmpty() || emails.isNotEmpty())) {
-                        contacts += Contact(display, phones.distinct(), emails.distinct())
+                        contacts += Contact(display, phones.distinct(), emails.distinct(), photo)
                     }
                 }
             }
         }
         return contacts.distinctBy { it.name + it.addresses.joinToString() }.sortedBy { it.name.lowercase() }
+    }
+
+    /** Joins quoted-printable soft line breaks ("=" at line end), only on QP properties:
+     *  base64 photo lines can legitimately end with "=" padding. */
+    private fun unfoldQuotedPrintable(text: String): String {
+        val out = StringBuilder()
+        var joining = false
+        for (raw in text.split("\n")) {
+            val line = raw.trimEnd('\r')
+            val isQp = joining || line.substringBefore(':').uppercase().contains("QUOTED-PRINTABLE")
+            if (isQp && line.endsWith("=")) {
+                out.append(line, 0, line.length - 1)
+                joining = true
+            } else {
+                out.append(line).append('\n')
+                joining = false
+            }
+        }
+        return out.toString()
+    }
+
+    /** PHOTO;ENCODING=BASE64;TYPE=JPEG (2.1) or PHOTO;ENCODING=b;TYPE=JPEG (3.0); URLs are skipped. */
+    internal fun decodePhoto(key: String, value: String): ByteArray? {
+        val upper = key.uppercase()
+        if ("VALUE=URI" in upper || "VALUE=URL" in upper) return null
+        if ("BASE64" !in upper && "ENCODING=B" !in upper) return null
+        val clean = value.filterNot { it.isWhitespace() }
+        if (clean.isEmpty()) return null
+        return runCatching { java.util.Base64.getMimeDecoder().decode(clean) }.getOrNull()?.takeIf { it.size > 64 }
     }
 
     private fun decodeValue(key: String, value: String): String {
