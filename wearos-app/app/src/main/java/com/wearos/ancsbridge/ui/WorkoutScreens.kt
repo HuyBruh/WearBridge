@@ -455,6 +455,10 @@ internal fun SummaryContent(record: WorkoutRecord, healthAvailable: Boolean, onD
             SummaryRow("Goal · ${record.goal.label}", if (reached) "Completed" else "Not completed", WorkoutColors.Green)
         }
         record.avgHeartRate?.let { item { SummaryRow("Avg. Heart Rate", "$it bpm", WorkoutColors.Heart) } }
+        record.vo2Max?.let { item { SummaryRow("VO₂ Max", "%.1f".format(it), WorkoutColors.Heart) } }
+        record.strideLengthM?.let { item { SummaryRow("Avg. Stride", "%.2f m".format(Locale.US, it), WorkoutColors.Distance) } }
+        record.groundContactMs?.let { item { SummaryRow("Ground Contact", "${it.toInt()} ms", WorkoutColors.Distance) } }
+        record.verticalOscillationCm?.let { item { SummaryRow("Vertical Oscillation", "%.1f cm".format(Locale.US, it), WorkoutColors.Distance) } }
         record.maxHeartRate?.let { item { SummaryRow("Max Heart Rate", "$it bpm", WorkoutColors.Heart) } }
         if (record.splits.isNotEmpty()) {
             item { ListHeader { Text("Splits") } }

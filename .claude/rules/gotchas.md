@@ -48,3 +48,11 @@
 
 24. **The Xcode project is committed, CI does not run xcodegen**: a new Swift file must also be added to `project.pbxproj` (build file, file reference, group, Sources phase), or CI builds without it.
 
+25. **MAP/PBAP need a Bluetooth Classic bond**: the ANCS bond is LE-only, so RFCOMM to the iPhone's MAS/PSE fails until the watch is also bonded over BR/EDR (Messages › Set Up). iOS only answers MAP/PBAP after "Show Notifications" / "Sync Contacts" are on for the watch; a refused OBEX CONNECT means one is off.
+
+26. **ANCS gives names, not numbers**: a reply needs the sender's address. It comes from the MAP inbox listing (`sender_addressing`) matched by `sender_name` = ANCS title, else from PBAP contacts.
+
+27. **Pixel Watch cannot be the iPhone's call headset**: HFP hands-free role and SCO audio are not available to apps (Merge only offers call audio on Galaxy Watch, whose firmware has it). Don't register an HFP record from the app: iOS would route calls to a "headset" that has no audio.
+
+28. **Health Services exposes no SpO2/HRV/sleep stages**: sleep comes only as the passive ASLEEP activity state (duration, no stages).
+

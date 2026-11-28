@@ -45,16 +45,19 @@ class ScreensSnapshot {
 
     private fun shot(content: @Composable () -> Unit) = paparazzi.snapshot { Frame(content) }
 
+    private val todayPreview get() = com.wearos.ancsbridge.model.PhoneInfo.parse(
+        """{"at":1,"weather":{"temp":28.4,"code":2,"day":true,"hi":31,"lo":24,"place":"Hà Nội","at":5}}""")!!
+
     private val song = NowPlaying("Chúng Ta Của Hiện Tại", "Sơn Tùng M-TP", "Spotify", true, 0.6f)
 
     @Test
     fun homeConnected() = shot {
-        HomeContent(ConnectionState.Connected("Huy's iPhone"), true, song, false, 2, rings, true, true, {}, {}, {}, {})
+        HomeContent(ConnectionState.Connected("Huy's iPhone"), true, song, false, 2, rings, todayPreview, true, true, {}, {}, {}, {})
     }
 
     @Test
     fun homeDisconnected() = shot {
-        HomeContent(ConnectionState.Disconnected(), true, NowPlaying(), false, 0, rings, false, false, {}, {}, {}, {})
+        HomeContent(ConnectionState.Disconnected(), true, NowPlaying(), false, 0, rings, com.wearos.ancsbridge.model.PhoneInfo(), false, false, {}, {}, {}, {})
     }
 
     @Test
@@ -152,4 +155,31 @@ class ScreensSnapshot {
 
     @Test
     fun health() = shot { HealthContent(3, 0, false, false, true, {}, {}, 0) }
+
+    private val msgs = com.wearos.ancsbridge.messages.MapFormats.parseListing("""
+        <msg handle="1" subject="Tối nay đi ăn không?" datetime="20261127T201500" sender_name="Minh" sender_addressing="+84912345678" read="no"/>
+        <msg handle="2" subject="Ok anh" datetime="20261127T190000" sender_name="Lan" sender_addressing="lan@icloud.com" read="yes"/>
+    """, false) + com.wearos.ancsbridge.messages.MapMessage("3", "Đi luôn!", com.wearos.ancsbridge.messages.MapFormats.parseDateTime("20261127T201700"),
+        "", "", "Minh", "+84912345678", true, true)
+    private val convs = com.wearos.ancsbridge.messages.MapFormats.conversations(msgs)
+
+    @Test
+    fun messagesList() = shot {
+        MessagesContent(convs, com.wearos.ancsbridge.messages.PhoneMessaging.Status.Ready, {}, {}, {},
+            now = com.wearos.ancsbridge.messages.MapFormats.parseDateTime("20261127T203000"))
+    }
+
+    @Test
+    fun conversation() = shot { ConversationContent("Minh", convs.first()) {} }
+
+    @Test
+    fun reply() = shot { ReplyContent("Minh", com.wearos.ancsbridge.model.QuickReplies.DEFAULTS, false, null, {}, {}) }
+
+    @Test
+    fun today() = shot {
+        TodayContent(com.wearos.ancsbridge.model.PhoneInfo.parse("""{"at":1,"weather":{"temp":28.4,"code":2,"day":true,"hi":31,"lo":24,"place":"Hà Nội","at":5,
+            "hourly":[[1764252000000,28,2],[1764255600000,27,3],[1764259200000,26,61],[1764262800000,25,61],[1764266400000,25,3]]},
+            "events":[{"title":"Họp nhóm dự án","start":2000000000000,"end":2000003600000,"allDay":false,"color":"#0A84FF","location":"Zoom"}],
+            "reminders":[{"id":"r1","title":"Mua sữa","due":1}]}""")!!, {}, now = 1_999_000_000_000)
+    }
 }

@@ -73,6 +73,8 @@ class BleConnectionManager(private val context: Context) {
         private val HEALTH_UUID = UUID.fromString("A0E3D5B8-4C6F-4E8A-9B2D-7F1E3A5C8D0B")
         /** JSON array of the quick replies edited in the iPhone app. */
         private val REPLIES_UUID = UUID.fromString("A0E3D5B9-4C6F-4E8A-9B2D-7F1E3A5C8D0B")
+        /** Weather / calendar / reminders JSON; notify = "re-read me"; write = complete reminder. */
+        private val INFO_UUID = UUID.fromString("A0E3D5BA-4C6F-4E8A-9B2D-7F1E3A5C8D0B")
         private const val CHUNK_FIRST = 0x01
         private const val CHUNK_LAST = 0x02
 
@@ -115,6 +117,8 @@ class BleConnectionManager(private val context: Context) {
     val nowPlaying: StateFlow<NowPlaying> = _nowPlaying.asStateFlow()
 
     val phoneTools = MutableStateFlow(false)
+    /** Latest Today data from the iPhone app (JSON), empty until read. */
+    val phoneInfo = MutableStateFlow("")
     val phoneSummary = MutableStateFlow("")
 
     private var gatt: BluetoothGatt? = null
@@ -283,6 +287,7 @@ class BleConnectionManager(private val context: Context) {
             AncsConstants.NOTIFICATION_SOURCE_UUID -> onNotificationEvent(data)
             AncsConstants.DATA_SOURCE_UUID -> onAttributeData(data)
             AncsConstants.CALL_STATE_CHARACTERISTIC_UUID -> _callStateEvents.tryEmit(data)
+            INFO_UUID -> scope.launch { refreshInfo() }
             MEDIA_REMOTE_COMMAND_UUID -> supportedCommands.value = data.map { it.toInt() and 0xff }.toSet()
             MEDIA_ENTITY_UPDATE_UUID -> _nowPlaying.value = _nowPlaying.value.withUpdate(data)
         }
@@ -381,6 +386,10 @@ class BleConnectionManager(private val context: Context) {
                 read(session, char)?.decodeToString()?.let {
                     com.wearos.ancsbridge.model.QuickReplies.save(context, it)
                 }
+            }
+            companion.getCharacteristic(INFO_UUID)?.let { char ->
+                enableNotifications(session, char)
+                read(session, char)?.decodeToString()?.let { phoneInfo.value = it }
             }
             phoneTools.value = companion.getCharacteristic(TOOLS_UUID) != null
         }
@@ -584,6 +593,19 @@ class BleConnectionManager(private val context: Context) {
             offset = end
         }
     }
+
+    /** Re-reads weather, calendar and reminders from the iPhone app. */
+    suspend fun refreshInfo(): Boolean {
+        val session = gatt ?: return false
+        val char = companionCharacteristic(INFO_UUID) ?: return false
+        val value = read(session, char) ?: return false
+        phoneInfo.value = value.decodeToString()
+        return true
+    }
+
+    /** Marks a reminder done on the iPhone. */
+    suspend fun completeReminder(id: String): Boolean =
+        companionWrite(INFO_UUID, org.json.JSONObject().put("complete", id).toString().toByteArray())
 
     /** Quick reply payload "callerName|replyText" for the iPhone app's Shortcut. */
     suspend fun writeQuickReply(payload: String): Boolean =

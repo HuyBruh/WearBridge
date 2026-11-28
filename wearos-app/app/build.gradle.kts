@@ -14,8 +14,8 @@ android {
         applicationId = "com.wearos.ancsbridge"
         minSdk = 33 // Wear OS 4
         targetSdk = 35
-        versionCode = 5
-        versionName = "1.4"
+        versionCode = 6
+        versionName = "1.5"
     }
 
     buildTypes {
@@ -75,6 +75,7 @@ dependencies {
     // Health Services (workouts, heart rate, passive steps) + ongoing activity chip
     implementation("androidx.health:health-services-client:1.1.0")
     implementation("androidx.wear:wear-ongoing:1.1.0")
+    implementation("androidx.wear:wear-input:1.2.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-guava:1.9.0")
 
     // Tiles & complications (Activity rings, Workout shortcuts, iPhone battery)

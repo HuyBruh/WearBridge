@@ -16,6 +16,15 @@ object TileUpdates {
         }
     }
 
+    fun today(context: Context) {
+        runCatching { TileService.getUpdater(context).requestUpdate(TodayTileService::class.java) }
+        listOf(WeatherComplicationService::class.java, NextEventComplicationService::class.java).forEach { service ->
+            runCatching {
+                ComplicationDataSourceUpdateRequester.create(context, ComponentName(context, service)).requestUpdateAll()
+            }
+        }
+    }
+
     fun phone(context: Context) {
         runCatching {
             ComplicationDataSourceUpdateRequester.create(

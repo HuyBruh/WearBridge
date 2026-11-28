@@ -61,6 +61,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         kind: com.wearos.ancsbridge.health.WorkoutKind,
         goal: com.wearos.ancsbridge.health.WorkoutGoal = com.wearos.ancsbridge.health.WorkoutGoal.OPEN
     ) = com.wearos.ancsbridge.health.WorkoutService.start(getApplication(), kind, goal)
+    // ---- Messages over Bluetooth MAP/PBAP ----
+    val messagingStatus = com.wearos.ancsbridge.messages.PhoneMessaging.status
+    val conversations = com.wearos.ancsbridge.messages.PhoneMessaging.conversations
+    val contacts = com.wearos.ancsbridge.messages.PhoneMessaging.contacts
+    fun messagingReady(): Boolean {
+        com.wearos.ancsbridge.messages.PhoneMessaging.load(getApplication())
+        return com.wearos.ancsbridge.messages.PhoneMessaging.isSetUp(getApplication())
+    }
+    fun refreshMessages() = viewModelScope.launch {
+        com.wearos.ancsbridge.messages.PhoneMessaging.refresh(getApplication())
+    }
+    fun syncContacts() = viewModelScope.launch {
+        com.wearos.ancsbridge.messages.PhoneMessaging.syncContacts(getApplication())
+    }
+    fun sendMessage(address: String, text: String, done: (Boolean) -> Unit) = viewModelScope.launch {
+        done(com.wearos.ancsbridge.messages.PhoneMessaging.send(getApplication(), address, text))
+    }
+    fun forgetMessaging() = com.wearos.ancsbridge.messages.PhoneMessaging.forget(getApplication())
+    val classicPairing by lazy { com.wearos.ancsbridge.messages.ClassicPairing(getApplication()) }
+
+    // ---- Today: weather, calendar, reminders from the iPhone ----
+    fun refreshPhoneInfo() {
+        val context = getApplication<Application>()
+        context.startService(Intent(context, AncsService::class.java).setAction(AncsService.ACTION_REFRESH_INFO))
+    }
+    fun completeReminder(id: String) {
+        com.wearos.ancsbridge.model.PhoneInfo.removeReminder(id)
+        val context = getApplication<Application>()
+        context.startService(Intent(context, AncsService::class.java)
+            .setAction(AncsService.ACTION_COMPLETE_REMINDER).putExtra("id", id))
+    }
+
     val activityRings = com.wearos.ancsbridge.health.ActivityTracker.rings
     fun activityRingsNow() = com.wearos.ancsbridge.health.ActivityTracker.ringsNow(getApplication())
     fun setActivityGoals(move: Int, exercise: Int, stand: Int) =
@@ -246,5 +278,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     override fun onCleared() {
         super.onCleared()
         stopScan()
+        classicPairing.stop()
     }
 }

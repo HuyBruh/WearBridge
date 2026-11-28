@@ -68,6 +68,8 @@ class AncsService : Service() {
         const val ACTION_DRAFT = "com.wearos.ancsbridge.DRAFT"
         const val ACTION_CLEAR_ALL = "com.wearos.ancsbridge.CLEAR_ALL"
         const val ACTION_SYNC_HEALTH = "com.wearos.ancsbridge.SYNC_HEALTH"
+        const val ACTION_COMPLETE_REMINDER = "com.wearos.ancsbridge.COMPLETE_REMINDER"
+        const val ACTION_REFRESH_INFO = "com.wearos.ancsbridge.REFRESH_INFO"
         /** Apple Health sync status for the UI: true while records are being sent. */
         val healthSyncing = MutableStateFlow(false)
         val healthAvailable = MutableStateFlow(false)
@@ -175,9 +177,15 @@ class AncsService : Service() {
                 if (it) phoneRefreshJob = scope.launch {
                     while (true) {
                         connectionManager.refreshPhone()
+                        connectionManager.refreshInfo()
                         kotlinx.coroutines.delay(15 * 60_000L)
                     }
                 }
+            }
+        }
+        scope.launch {
+            connectionManager.phoneInfo.collect {
+                if (it.isNotBlank()) com.wearos.ancsbridge.model.PhoneInfo.save(this@AncsService, it)
             }
         }
         scope.launch {
@@ -302,7 +310,23 @@ class AncsService : Service() {
             ACTION_DRAFT -> {
                 val text = androidx.core.app.RemoteInput.getResultsFromIntent(intent)?.getCharSequence("body")?.toString()?.trim()
                 val uid = intent.getLongExtra("uid", -1)
-                if (!text.isNullOrEmpty() && uid in actionableUids && intent.getStringExtra("session") == sessionToken) {
+                val sender = intent.getStringExtra("sender").orEmpty()
+                val alertText = intent.getStringExtra("text").orEmpty()
+                if (!text.isNullOrEmpty() && com.wearos.ancsbridge.messages.PhoneMessaging.isSetUp(this)) {
+                    // Send for real through the iPhone's Messages app (Bluetooth MAP).
+                    scope.launch {
+                        val sent = com.wearos.ancsbridge.messages.PhoneMessaging.replyToAlert(this@AncsService, sender, alertText, text)
+                        if (sent) {
+                            replyHaptic()
+                            android.widget.Toast.makeText(this@AncsService, "Sent", android.widget.Toast.LENGTH_SHORT).show()
+                            notificationManager.cancel(MIRROR_TAG, notificationIdForUid(uid))
+                        } else {
+                            val reason = (com.wearos.ancsbridge.messages.PhoneMessaging.status.value
+                                as? com.wearos.ancsbridge.messages.PhoneMessaging.Status.Error)?.message ?: "Not sent"
+                            android.widget.Toast.makeText(this@AncsService, reason, android.widget.Toast.LENGTH_LONG).show()
+                        }
+                    }
+                } else if (!text.isNullOrEmpty() && uid in actionableUids && intent.getStringExtra("session") == sessionToken) {
                     val payload = org.json.JSONObject().put("id", java.util.UUID.randomUUID().toString())
                         .put("sender", intent.getStringExtra("sender").orEmpty()).put("body", text)
                         .toString().encodeToByteArray()
@@ -314,6 +338,13 @@ class AncsService : Service() {
                 }
             }
             ACTION_SYNC_HEALTH -> syncHealth()
+            ACTION_REFRESH_INFO -> scope.launch { connectionManager.refreshInfo() }
+            ACTION_COMPLETE_REMINDER -> {
+                val id = intent.getStringExtra("id")
+                if (id != null) scope.launch {
+                    if (connectionManager.completeReminder(id)) connectionManager.refreshInfo()
+                }
+            }
             ACTION_CLEAR_ALL -> {
                 Log.i(TAG, "Clearing all notifications (${activeNotificationIds.size} tracked)")
                 activeNotificationIds.forEach { id ->
@@ -381,6 +412,21 @@ class AncsService : Service() {
         sendBroadcast(Intent(IncomingCallActivity.ACTION_CALL_ENDED).apply {
             setPackage(packageName)
         })
+    }
+
+    private var messagesRefreshJob: Job? = null
+
+    /** Keeps the watch's Messages app current when a new message alert arrives. */
+    private fun refreshMessagesSoon() {
+        messagesRefreshJob?.cancel()
+        messagesRefreshJob = scope.launch {
+            kotlinx.coroutines.delay(3_000)
+            com.wearos.ancsbridge.messages.PhoneMessaging.refresh(this@AncsService)
+        }
+    }
+
+    private fun replyHaptic() {
+        runCatching { vibrator.vibrate(android.os.VibrationEffect.createPredefined(android.os.VibrationEffect.EFFECT_CLICK)) }
     }
 
     /** Drains the health outbox to the iPhone app, oldest first, one record at a time. */
@@ -719,11 +765,17 @@ class AncsService : Service() {
 
         }
 
-        if (showPreviews && connectionManager.canDraft && notification.appIdentifier.equals("com.apple.MobileSMS", true)) {
+        val isMessages = notification.appIdentifier.equals("com.apple.MobileSMS", true)
+        val mapReady = com.wearos.ancsbridge.messages.PhoneMessaging.isSetUp(this)
+        if (isMessages && mapReady) refreshMessagesSoon()
+        val canReply = (isMessages && (connectionManager.canDraft || mapReady)) ||
+            (notification.categoryId == AncsConstants.CATEGORY_MISSED_CALL && mapReady)
+        if (showPreviews && canReply) {
             val draftIntent = Intent(this, AncsService::class.java).apply {
                 action = ACTION_DRAFT
                 putExtra("uid", notification.uid)
                 putExtra("sender", notification.title)
+                putExtra("text", notification.message)
                 putExtra("session", sessionToken)
             }
             // Reply chips from the iPhone app's list, plus voice/keyboard, like Apple Watch.

@@ -26,6 +26,10 @@
 	<string>Share the next three calendar events with your paired watch when you enable calendar sharing.</string>
 	<key>NSHealthUpdateUsageDescription</key>
 	<string>Save workouts, heart rate, steps and active energy recorded by your Pixel Watch.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Show the weather where you are on your watch.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>Show today's reminders on your watch and tick them off from there.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Use your paired watch as a shutter while the camera is open.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>

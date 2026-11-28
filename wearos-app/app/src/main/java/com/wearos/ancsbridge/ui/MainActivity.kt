@@ -21,6 +21,7 @@ class MainActivity : ComponentActivity() {
         /** Deep link from tiles and complications. */
         const val EXTRA_OPEN = "open"
         const val OPEN_ACTIVITY = "activity"
+        const val OPEN_TODAY = "today"
         const val OPEN_WORKOUT_PREFIX = "workout:"
         const val OPEN_LIVE_WORKOUT = "live_workout"
     }

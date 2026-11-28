@@ -39,9 +39,19 @@ class PassiveHealthService : PassiveListenerService() {
         val calories = intervals(dataPoints.getData(DataType.CALORIES_DAILY))
 
         ActivityTracker.onPassiveData(this, steps, calories)
+        SleepTracker.addHeartRate(this, heartRate)
 
         if (heartRate.isEmpty() && steps.isEmpty() && distance.isEmpty() && floors.isEmpty()) return
         HealthOutbox(this).add(PassiveRecord.toJson(heartRate, steps, distance, floors))
+        startService(Intent(this, AncsService::class.java).setAction(AncsService.ACTION_SYNC_HEALTH))
+    }
+
+    /** Sleep periods come from the passive user-activity state (ASLEEP). */
+    override fun onUserActivityInfoReceived(info: androidx.health.services.client.data.UserActivityInfo) {
+        val asleep = info.userActivityState == androidx.health.services.client.data.UserActivityState.USER_ACTIVITY_ASLEEP
+        val finished = SleepTracker.onState(this, asleep, info.stateChangeTime.toEpochMilli()) ?: return
+        val (interval, resting) = finished
+        HealthOutbox(this).add(PassiveRecord.sleepJson(interval, resting))
         startService(Intent(this, AncsService::class.java).setAction(AncsService.ACTION_SYNC_HEALTH))
     }
 
@@ -66,7 +76,8 @@ class PassiveHealthService : PassiveListenerService() {
                     if (types.isEmpty()) return false
                     client.setPassiveListenerService(
                         PassiveHealthService::class.java,
-                        PassiveListenerConfig.builder().setDataTypes(types).build()
+                        PassiveListenerConfig.builder().setDataTypes(types)
+                            .setShouldUserActivityInfoBeRequested(true).build()
                     )
                 } else {
                     client.clearPassiveListenerService()

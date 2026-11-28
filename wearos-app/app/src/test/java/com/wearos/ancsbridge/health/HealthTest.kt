@@ -123,3 +123,43 @@ class ActivityTest {
         assertEquals(8, WorkoutGoal.presets(WorkoutKind.YOGA).size)
     }
 }
+
+class TodayAndSleepTest {
+    @Test
+    fun `parses the iPhone Today payload`() {
+        val json = """{"at":1,"weather":{"temp":28.4,"code":61,"day":true,"hi":31.2,"lo":24,"place":"Hà Nội","at":5,
+            "hourly":[[1000,28.4,61],[2000,27.0,3]]},
+            "events":[{"title":"Họp nhóm","start":100,"end":200,"allDay":false,"color":"#FF3B30"}],
+            "reminders":[{"id":"r1","title":"Mua sữa","due":50}]}"""
+        val info = com.wearos.ancsbridge.model.PhoneInfo.parse(json)!!
+        assertEquals("Rain", info.weather!!.condition)
+        assertEquals(31.2, info.weather!!.hi!!, 0.0)
+        assertEquals(2, info.weather!!.hourly.size)
+        assertEquals(0xFFFF3B30.toInt(), info.events[0].color)
+        assertEquals("Mua sữa", info.reminders[0].title)
+        assertEquals("Họp nhóm", info.nextEvent(now = 150)?.title)
+        assertEquals(null, info.nextEvent(now = 300))
+        assertEquals(null, com.wearos.ancsbridge.model.PhoneInfo.parse("nope"))
+    }
+
+    @Test
+    fun `resting heart rate uses the lowest readings`() {
+        assertEquals(null, SleepTracker.restingHeartRate(listOf(60, 61)))
+        val night = List(14) { 70 } + listOf(52, 53, 54, 55, 56, 57)
+        assertEquals(54, SleepTracker.restingHeartRate(night))
+    }
+
+    @Test
+    fun `running metrics and sleep serialize for HealthKit`() {
+        val record = WorkoutRecord(kind = WorkoutKind.OUTDOOR_RUN, startMs = 0, endMs = 1, activeMs = 1,
+            kcal = null, distanceM = null, steps = null, heartRate = emptyList(), route = emptyList(),
+            pauses = emptyList(), vo2Max = 47.26, groundContactMs = 251.4, verticalOscillationCm = 8.84, strideLengthM = 1.123)
+        val json = record.toJson()
+        assertEquals(47.3, json.getDouble("vo2max"), 0.0)
+        assertEquals(251.0, json.getDouble("gct"), 0.0)
+        assertEquals(1.12, json.getDouble("stride"), 0.0)
+        val sleep = PassiveRecord.sleepJson(10L to 20L, 55)
+        assertEquals(2, sleep.getJSONArray("sleep").getJSONArray(0).length())
+        assertEquals(55, sleep.getJSONArray("resting").getJSONArray(0).getInt(1))
+    }
+}

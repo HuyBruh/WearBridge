@@ -34,6 +34,8 @@ class PeripheralManager: NSObject, ObservableObject {
     /// Health records being reassembled, per connected watch.
     private var healthBuffers: [UUID: Data] = [:]
     private var replySnapshots: [UUID: Data] = [:]
+    private var infoSnapshots: [UUID: Data] = [:]
+    private var infoCharacteristic: CBMutableCharacteristic?
     private var serviceAdded = false
     private var scanTimer: Timer?
 
@@ -252,6 +254,10 @@ class PeripheralManager: NSObject, ObservableObject {
         UIDevice.current.isBatteryMonitoringEnabled = true
         let replies = CBMutableCharacteristic(type: BLEConstants.repliesUUID, properties: [.read],
             value: nil, permissions: [.readEncryptionRequired])
+        let info = CBMutableCharacteristic(type: BLEConstants.infoUUID, properties: [.read, .write, .notify],
+            value: nil, permissions: [.readEncryptionRequired, .writeEncryptionRequired])
+        infoCharacteristic = info
+        WatchInfoProvider.shared.onChange = { [weak self] in self?.notifyInfoChanged() }
         let health = CBMutableCharacteristic(type: BLEConstants.healthUUID, properties: [.write],
             value: nil, permissions: [.writeEncryptionRequired])
         let tools = CBMutableCharacteristic(type: BLEConstants.toolsUUID, properties: [.read, .write],
@@ -269,7 +275,7 @@ class PeripheralManager: NSObject, ObservableObject {
             type: BLEConstants.companionServiceUUID,
             primary: true
         )
-        companionService?.characteristics = [statusCharacteristic!, quickReplyCharacteristic, callStateCharacteristic!, draft, tools, health, replies]
+        companionService?.characteristics = [statusCharacteristic!, quickReplyCharacteristic, callStateCharacteristic!, draft, tools, health, replies, info]
 
         peripheralManager.add(companionService!)
         serviceAdded = true
@@ -346,6 +352,15 @@ extension PeripheralManager: CBPeripheralManagerDelegate {
             }
             request.value = Data(data.dropFirst(request.offset))
             peripheral.respond(to: request, withResult: .success)
+        } else if request.characteristic.uuid == BLEConstants.infoUUID {
+            let key = request.central.identifier
+            if request.offset == 0 { infoSnapshots[key] = WatchInfoProvider.shared.payload() }
+            guard let data = infoSnapshots[key], request.offset <= data.count else {
+                peripheral.respond(to: request, withResult: .invalidOffset)
+                return
+            }
+            request.value = Data(data.dropFirst(request.offset))
+            peripheral.respond(to: request, withResult: .success)
         } else if request.characteristic.uuid == BLEConstants.repliesUUID {
             let key = request.central.identifier
             if request.offset == 0 { replySnapshots[key] = QuickReplyStore.watchPayload() }
@@ -368,6 +383,17 @@ extension PeripheralManager: CBPeripheralManagerDelegate {
 
     func peripheralManager(_ peripheral: CBPeripheralManager, didReceiveWrite requests: [CBATTRequest]) {
         guard let first = requests.first else { return }
+        if first.characteristic.uuid == BLEConstants.infoUUID {
+            guard requests.count == 1, first.offset == 0, let data = first.value,
+                  let command = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let id = command["complete"] as? String else {
+                peripheral.respond(to: first, withResult: .invalidAttributeValueLength)
+                return
+            }
+            let done = WatchInfoProvider.shared.completeReminder(id: id)
+            peripheral.respond(to: first, withResult: done ? .success : .unlikelyError)
+            return
+        }
         if first.characteristic.uuid == BLEConstants.healthUUID {
             handleHealthChunk(first, peripheral: peripheral, count: requests.count)
             return
@@ -467,6 +493,12 @@ extension PeripheralManager: CBPeripheralManagerDelegate {
         }
     }
 
+    /// One byte tells a subscribed watch to re-read the info characteristic.
+    private func notifyInfoChanged() {
+        guard let info = infoCharacteristic else { return }
+        _ = peripheralManager.updateValue(Data([0x01]), for: info, onSubscribedCentrals: nil)
+    }
+
     private func handleQuickReply(_ payload: String) {
         DispatchQueue.main.async {
             QuickReplyLauncher.shared.deliver(payload)
@@ -480,11 +512,14 @@ extension PeripheralManager: CBPeripheralManagerDelegate {
                let characteristics = service.characteristics,
                characteristics.contains(where: { $0.uuid == BLEConstants.healthUUID }),
                characteristics.contains(where: { $0.uuid == BLEConstants.repliesUUID }),
+               characteristics.contains(where: { $0.uuid == BLEConstants.infoUUID }),
                characteristics.contains(where: { $0.uuid == BLEConstants.toolsUUID }),
                characteristics.contains(where: { $0.uuid == BLEConstants.draftUUID }) {
                 companionService = service
                 statusCharacteristic = characteristics.first { $0.uuid == BLEConstants.connectionStatusUUID } as? CBMutableCharacteristic
                 callStateCharacteristic = characteristics.first { $0.uuid == BLEConstants.callStateCharacteristicUUID } as? CBMutableCharacteristic
+                infoCharacteristic = characteristics.first { $0.uuid == BLEConstants.infoUUID } as? CBMutableCharacteristic
+                WatchInfoProvider.shared.onChange = { [weak self] in self?.notifyInfoChanged() }
                 UIDevice.current.isBatteryMonitoringEnabled = true
                 serviceAdded = true
             } else {

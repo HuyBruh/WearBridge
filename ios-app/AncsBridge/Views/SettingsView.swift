@@ -10,6 +10,8 @@ struct SettingsView: View {
 
     @AppStorage("allowPing") private var allowPing = false
     @AppStorage("shareAgenda") private var shareAgenda = false
+    @AppStorage("shareWeather") private var shareWeather = false
+    @AppStorage("shareReminders") private var shareReminders = false
     @AppStorage("syncWorkouts") private var syncWorkouts = false
     @State private var cameraOpen = false
     @State private var toolsMessage = ""
@@ -55,6 +57,24 @@ struct SettingsView: View {
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
+                }
+                Section {
+                    Toggle(isOn: $shareWeather) {
+                        Label("Weather", systemImage: "cloud.sun.fill")
+                    }
+                    .onChange(of: shareWeather) { on in
+                        if on { WatchInfoProvider.shared.requestLocation() }
+                    }
+                    Toggle(isOn: Binding(get: { shareReminders }, set: { on in
+                        if !on { shareReminders = false; return }
+                        Task { shareReminders = await WatchInfoProvider.shared.requestReminders() }
+                    })) {
+                        Label("Reminders", systemImage: "checklist")
+                    }
+                } header: {
+                    Text("On your watch")
+                } footer: {
+                    Text("Shown in Today on the watch, with a tile and complications. Calendar uses \"Share next 24 hours of calendar\" below.")
                 }
                 Section("iPhone controls") {
                     Toggle(isOn: $allowPing) {

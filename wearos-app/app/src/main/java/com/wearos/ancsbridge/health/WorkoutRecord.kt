@@ -25,6 +25,12 @@ data class WorkoutRecord(
     val splits: List<Pair<Long, Long>> = emptyList(),
     /** Wall-clock ms of each segment the user marked. */
     val segments: List<Long> = emptyList(),
+    /** Estimated VO2 max (mL/kg·min), when the watch reports it for runs. */
+    val vo2Max: Double? = null,
+    /** Running form averages: ground contact (ms), vertical oscillation (cm), stride (m). */
+    val groundContactMs: Double? = null,
+    val verticalOscillationCm: Double? = null,
+    val strideLengthM: Double? = null,
 ) {
     data class RoutePoint(val t: Long, val lat: Double, val lon: Double, val alt: Double)
 
@@ -54,6 +60,10 @@ data class WorkoutRecord(
         put("pauses", JSONArray().apply { pauses.forEach { (a, b) -> put(JSONArray().put(a).put(b)) } })
         put("splits", JSONArray().apply { splits.forEach { (t, d) -> put(JSONArray().put(t).put(d)) } })
         put("segments", JSONArray().apply { segments.forEach { put(it) } })
+        vo2Max?.let { put("vo2max", round(it, 1)) }
+        groundContactMs?.let { put("gct", round(it, 0)) }
+        verticalOscillationCm?.let { put("vosc", round(it, 1)) }
+        strideLengthM?.let { put("stride", round(it, 2)) }
         if (goal.type != WorkoutGoal.Type.OPEN) {
             put("goal", JSONObject().put("type", goal.type.name.lowercase()).put("target", goal.target))
         }
@@ -86,5 +96,14 @@ object PassiveRecord {
         put("steps", intervals(steps))
         put("distance", intervals(distance))
         put("floors", intervals(floors))
+    }
+
+    /** A finished sleep period plus the resting heart rate measured during it. */
+    fun sleepJson(interval: Pair<Long, Long>, restingBpm: Int?): JSONObject = JSONObject().apply {
+        put("type", "samples")
+        put("v", 1)
+        put("id", UUID.randomUUID().toString())
+        put("sleep", JSONArray().put(JSONArray().put(interval.first).put(interval.second)))
+        restingBpm?.let { put("resting", JSONArray().put(JSONArray().put(interval.second).put(it))) }
     }
 }

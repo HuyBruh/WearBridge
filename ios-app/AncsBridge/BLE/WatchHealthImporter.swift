@@ -30,9 +30,11 @@ final class WatchHealthImporter: ObservableObject {
         var types: Set<HKSampleType> = [HKObjectType.workoutType(), HKSeriesType.workoutRoute()]
         let ids: [HKQuantityTypeIdentifier] = [
             .heartRate, .activeEnergyBurned, .distanceWalkingRunning, .distanceCycling, .stepCount,
-            .flightsClimbed
+            .flightsClimbed, .restingHeartRate, .vo2Max,
+            .runningGroundContactTime, .runningVerticalOscillation, .runningStrideLength
         ]
         for id in ids { types.insert(HKQuantityType(id)) }
+        types.insert(HKCategoryType(.sleepAnalysis))
         return types
     }
 
@@ -252,6 +254,19 @@ final class WatchHealthImporter: ObservableObject {
                 type: HKQuantityType(.heartRate), quantity: HKQuantity(unit: bpmUnit, doubleValue: point[1].doubleValue),
                 start: time, end: time, device: Self.device, metadata: nil))
         }
+        // Running form averages over the whole workout, as Apple Watch records them.
+        let form: [(String, HKQuantityTypeIdentifier, HKUnit)] = [
+            ("gct", .runningGroundContactTime, HKUnit.secondUnit(with: .milli)),
+            ("vosc", .runningVerticalOscillation, HKUnit.meterUnit(with: .centi)),
+            ("stride", .runningStrideLength, HKUnit.meter()),
+        ]
+        for (key, identifier, unit) in form {
+            if let value = (record[key] as? NSNumber)?.doubleValue, value > 0 {
+                samples.append(HKQuantitySample(
+                    type: HKQuantityType(identifier), quantity: HKQuantity(unit: unit, doubleValue: value),
+                    start: start, end: end, device: Self.device, metadata: nil))
+            }
+        }
         if !samples.isEmpty { try await builder.addSamples(samples) }
 
         var events: [HKWorkoutEvent] = []
@@ -301,6 +316,14 @@ final class WatchHealthImporter: ObservableObject {
                 verticalAccuracy: hasAltitude ? 10 : -1,
                 timestamp: Date(timeIntervalSince1970: point[0].doubleValue / 1000))
         }
+        if let vo2 = (record["vo2max"] as? NSNumber)?.doubleValue, vo2 > 0 {
+            let sample = HKQuantitySample(
+                type: HKQuantityType(.vo2Max),
+                quantity: HKQuantity(unit: HKUnit(from: "ml/kg*min"), doubleValue: vo2),
+                start: end, end: end, device: Self.device,
+                metadata: [HKMetadataKeySyncIdentifier: "wearbridge.vo2.\(id)", HKMetadataKeySyncVersion: 1])
+            do { try await store.save(sample) } catch { logger.error("VO2 max not saved: \(error.localizedDescription)") }
+        }
         if locations.count >= 2 {
             // A missing route must not lose the workout itself.
             do {
@@ -335,6 +358,24 @@ final class WatchHealthImporter: ObservableObject {
                 start: Date(timeIntervalSince1970: Double(startMs) / 1000),
                 end: Date(timeIntervalSince1970: Double(endMs) / 1000), device: Self.device,
                 metadata: [HKMetadataKeySyncIdentifier: "wearbridge.steps.\(startMs)-\(endMs)", HKMetadataKeySyncVersion: 1]))
+        }
+        for interval in record["sleep"] as? [[NSNumber]] ?? [] where interval.count >= 2 {
+            let startMs = interval[0].int64Value, endMs = interval[1].int64Value
+            guard endMs > startMs else { continue }
+            objects.append(HKCategorySample(
+                type: HKCategoryType(.sleepAnalysis),
+                value: HKCategoryValueSleepAnalysis.asleepUnspecified.rawValue,
+                start: Date(timeIntervalSince1970: Double(startMs) / 1000),
+                end: Date(timeIntervalSince1970: Double(endMs) / 1000), device: Self.device,
+                metadata: [HKMetadataKeySyncIdentifier: "wearbridge.sleep.\(startMs)", HKMetadataKeySyncVersion: 1]))
+        }
+        for point in record["resting"] as? [[NSNumber]] ?? [] where point.count >= 2 {
+            let ms = point[0].int64Value
+            let time = Date(timeIntervalSince1970: Double(ms) / 1000)
+            objects.append(HKQuantitySample(
+                type: HKQuantityType(.restingHeartRate), quantity: HKQuantity(unit: bpmUnit, doubleValue: point[1].doubleValue),
+                start: time, end: time, device: Self.device,
+                metadata: [HKMetadataKeySyncIdentifier: "wearbridge.resting.\(ms)", HKMetadataKeySyncVersion: 1]))
         }
         // Daily distance and floors arrive as interval deltas, like steps.
         let intervalTypes: [(String, HKQuantityTypeIdentifier, HKUnit)] = [

@@ -163,6 +163,10 @@ class WorkoutService : Service() {
     private var lastSplitActiveMs = 0L
     private var lastSplitAtMs = 0L
     private val segments = ArrayList<Long>()
+    private var vo2Max: Double? = null
+    private val groundContact = ArrayList<Double>()
+    private val verticalOscillation = ArrayList<Double>()
+    private val strideLength = ArrayList<Double>()
     private val vibrator by lazy { getSystemService(android.os.Vibrator::class.java) }
 
     private val callback = object : ExerciseUpdateCallback {
@@ -280,6 +284,11 @@ class WorkoutService : Service() {
                 add(DataType.STEPS_TOTAL)
                 if (kind.showsDistance) add(DataType.SPEED)
                 if (gpsEnabled) add(DataType.LOCATION)
+                // Running metrics Apple Watch records too (only kept if supported).
+                add(DataType.VO2_MAX)
+                add(DataType.GROUND_CONTACT_TIME)
+                add(DataType.VERTICAL_OSCILLATION)
+                add(DataType.STRIDE_LENGTH)
             }.filter { it in supported }.toSet()
 
             exerciseClient.setUpdateCallback(ContextCompat.getMainExecutor(this), callback)
@@ -329,6 +338,7 @@ class WorkoutService : Service() {
         heartRate.clear(); route.clear(); pauses.clear()
         pauseStartedMs = null; latestHr = null; kcal = 0.0; distance = 0.0
         steps = null; speed = null; paused = false; finished = false
+        vo2Max = null; groundContact.clear(); verticalOscillation.clear(); strideLength.clear()
         goalReached = false; splits.clear(); segments.clear(); lastSplitActiveMs = 0L; lastSplitAtMs = 0L
         checkpointMs = startMs; activeAtCheckpoint = 0L
     }
@@ -354,6 +364,10 @@ class WorkoutService : Service() {
         metrics.getData(DataType.DISTANCE_TOTAL)?.let { distance = it.total }
         metrics.getData(DataType.STEPS_TOTAL)?.let { steps = it.total }
         metrics.getData(DataType.SPEED).lastOrNull()?.let { speed = it.value }
+        metrics.getData(DataType.VO2_MAX).lastOrNull()?.let { vo2Max = (it.value as Number).toDouble() }
+        metrics.getData(DataType.GROUND_CONTACT_TIME).forEach { groundContact += (it.value as Number).toDouble() }
+        metrics.getData(DataType.VERTICAL_OSCILLATION).forEach { verticalOscillation += (it.value as Number).toDouble() }
+        metrics.getData(DataType.STRIDE_LENGTH).forEach { strideLength += (it.value as Number).toDouble() }
         metrics.getData(DataType.LOCATION).forEach { point ->
             val t = point.getTimeInstant(boot).toEpochMilli()
             if (route.isEmpty() || t - route.last().t >= ROUTE_INTERVAL_MS) {
@@ -432,7 +446,11 @@ class WorkoutService : Service() {
             kind = kind, startMs = startMs, endMs = end, activeMs = activeMs,
             kcal = kcal.takeIf { it > 0 }, distanceM = distance.takeIf { it > 0 && kind.showsDistance },
             steps = steps, heartRate = heartRate.toList(), route = route.toList(), pauses = pauses.toList(),
-            goal = goal, splits = splits.toList(), segments = segments.toList()
+            goal = goal, splits = splits.toList(), segments = segments.toList(),
+            vo2Max = vo2Max?.takeIf { it in 10.0..90.0 },
+            groundContactMs = groundContact.filter { it in 100.0..500.0 }.takeIf { it.isNotEmpty() }?.average(),
+            verticalOscillationCm = verticalOscillation.filter { it in 2.0..20.0 }.takeIf { it.isNotEmpty() }?.average(),
+            strideLengthM = strideLength.filter { it in 0.3..3.0 }.takeIf { it.isNotEmpty() }?.average(),
         )
         // Very short sessions are almost always accidental starts: show but don't sync.
         if (activeMs >= 60_000) {

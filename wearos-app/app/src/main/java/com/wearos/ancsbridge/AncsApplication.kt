@@ -12,6 +12,7 @@ class AncsApplication : Application() {
         super.onCreate()
         createNotificationChannels()
         com.wearos.ancsbridge.health.ActivityTracker.onChanged = { com.wearos.ancsbridge.tiles.TileUpdates.activity(it) }
+        com.wearos.ancsbridge.model.PhoneInfo.onChanged = { com.wearos.ancsbridge.tiles.TileUpdates.today(it) }
     }
 
     private fun createNotificationChannels() {

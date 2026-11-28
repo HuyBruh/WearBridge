@@ -80,6 +80,7 @@ Crown rotation on the Now Playing screen sends Volume Up/Down.
 | Call State | `A0E3D5B4-4C6F-4E8A-9B2D-7F1E3A5C8D0B` | Read/Notify — iPhone pushes call state (0x00=idle, 0x01=ringing, 0x02=active, 0x03=ended) |
 
 | Quick Replies | `A0E3D5B9-4C6F-4E8A-9B2D-7F1E3A5C8D0B` | Read (encrypted) — JSON array of the iPhone app's quick replies; watch caches it in `QuickReplies` and uses it on the call screen and as reply chips |
+| Today | `A0E3D5BA-4C6F-4E8A-9B2D-7F1E3A5C8D0B` | Read/Notify/Write (encrypted) — JSON weather (Open-Meteo), next 36 h of events, today's reminders; notify = 1 byte "changed, re-read"; write `{"complete":"<reminder id>"}` |
 | Health | `A0E3D5B8-4C6F-4E8A-9B2D-7F1E3A5C8D0B` | Write (encrypted) — chunked health records: `[flags][payload]`, flags 0x01 first, 0x02 last |
 
 ## Workouts & Apple Health
@@ -92,7 +93,21 @@ Crown rotation on the Now Playing screen sends Volume Up/Down.
 - Workouts support goals (time / distance / calories, ring around the bezel), automatic km splits (haptic + banner) and user segments; iPhone writes splits as `.lap` and segments as `.segment` workout events.
 - Activity rings (`ActivityTracker`): Move = `CALORIES_DAILY` minus a resting rate learned from quiet periods; Exercise = workout minutes + brisk walking (≥100 steps/min) outside workouts; Stand = hours with ≥60 steps. Shown in the app, the Activity tile and the Move complication.
 - Tiles: `ActivityTileService` (rings), `WorkoutTileService` (one-tap walk/run/cycle). Complications: Move, iPhone battery (parsed from the companion status summary, refreshed every 15 min while connected).
+- Sleep: `PassiveListenerConfig.setShouldUserActivityInfoBeRequested(true)`; `SleepTracker` turns ASLEEP→other transitions (≥20 min) into sleep intervals and a resting heart rate (mean of the lowest 30% of readings during sleep) → `sleepAnalysis` / `restingHeartRate`.
+- Workouts also record `VO2_MAX`, `GROUND_CONTACT_TIME`, `VERTICAL_OSCILLATION`, `STRIDE_LENGTH` when supported → `vo2Max`, `runningGroundContactTime`, `runningVerticalOscillation`, `runningStrideLength`.
+- Today (`model/PhoneInfo`): Today screen, `TodayTileService`, `WeatherComplicationService`, `NextEventComplicationService`; refreshed on connect, on notify, every 15 min.
 - Toggle key on iPhone is still `syncWorkouts` (Settings → Apple Health); when off, the first chunk is refused and the watch keeps the record.
+
+## Messages over Bluetooth Classic (MAP + PBAP)
+
+iOS supports MAP 1.4 (reply, compose, browse inbox) and PBAP for car kits. The watch acts as a MAP/PBAP client in userspace:
+
+- One-time Classic bond (`messages/ClassicPairing`): discovery while the iPhone's Bluetooth settings are open, `createBond()`; address saved in prefs `messaging/device`. The BLE (ANCS) bond is separate and unaffected.
+- `messages/ObexClient`: OBEX CONNECT / SETPATH / GET / PUT over `createRfcommSocketToServiceRecord` (MAS `0x1132`, PSE `0x112F`); targets MAS `bb582b40-…`, PBAP `796135f0-…`.
+- `messages/PhoneMessaging`: SETPATH root → telecom → msg; `GetMessagesListing` on inbox/sent (subject ≤255 chars); `PushMessage` to outbox with Charset=UTF-8 (iOS sends via Messages, iMessage or SMS); `GetMessage` for full text; PBAP pull `telecom/pb.vcf` (vCard 2.1, FN/N/TEL/EMAIL).
+- Replying to a Messages alert: the ANCS title (contact name) is matched against inbox `sender_name` to find the address; falls back to PBAP contacts. Missed-call alerts get a Message action too.
+- iPhone side: user must enable **Show Notifications** (MAP) and **Sync Contacts** (PBAP) for the watch in Settings › Bluetooth › ⓘ.
+- Watch UI: Messages (conversations, thread bubbles, reply with quick replies or system dictation/keyboard/emoji via `RemoteInputIntentHelper`, compose to contacts), Setup screen.
 
 ## Quick Reply Flow
 

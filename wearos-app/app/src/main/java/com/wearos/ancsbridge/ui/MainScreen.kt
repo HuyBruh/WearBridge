@@ -24,6 +24,7 @@ import androidx.compose.material.icons.automirrored.rounded.VolumeDown
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.automirrored.rounded.DirectionsRun
+import androidx.compose.material.icons.automirrored.rounded.Chat
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.Bluetooth
 import androidx.compose.material.icons.rounded.ClearAll
@@ -103,6 +104,12 @@ private object Routes {
     const val WORKOUT_LIVE = "workout_live"
     const val WORKOUT_GOAL = "workout_goal"
     const val ACTIVITY = "activity"
+    const val MESSAGES = "messages"
+    const val TODAY = "today"
+    const val MESSAGES_SETUP = "messages_setup"
+    const val CONVERSATION = "conversation"
+    const val REPLY = "reply"
+    const val COMPOSE = "compose"
     const val HEALTH = "health"
 }
 
@@ -121,6 +128,7 @@ fun MainScreen(viewModel: MainViewModel, deepLink: String? = null, onDeepLinkHan
         when {
             link == MainActivity.OPEN_LIVE_WORKOUT && workoutRunning -> navController.navigate(Routes.WORKOUT_LIVE)
             link == MainActivity.OPEN_ACTIVITY -> navController.navigate(Routes.ACTIVITY)
+            link == MainActivity.OPEN_TODAY -> navController.navigate(Routes.TODAY)
             link.startsWith(MainActivity.OPEN_WORKOUT_PREFIX) -> {
                 if (workoutRunning) navController.navigate(Routes.WORKOUT_LIVE)
                 else runCatching {
@@ -156,6 +164,42 @@ fun MainScreen(viewModel: MainViewModel, deepLink: String? = null, onDeepLinkHan
             }
             composable(Routes.HEALTH) { HealthScreen(viewModel) }
             composable(Routes.ACTIVITY) { ActivityScreen(viewModel) }
+            composable(Routes.TODAY) { TodayScreen(viewModel) }
+            composable(Routes.MESSAGES) {
+                MessagesScreen(
+                    viewModel,
+                    openConversation = { navController.navigate("${Routes.CONVERSATION}/${android.net.Uri.encode(it)}") },
+                    openCompose = { navController.navigate(Routes.COMPOSE) },
+                    openSetup = { navController.navigate(Routes.MESSAGES_SETUP) },
+                )
+            }
+            composable(Routes.MESSAGES_SETUP) {
+                MessagesSetupScreen(viewModel) {
+                    navController.popBackStack(Routes.HOME, inclusive = false)
+                    navController.navigate(Routes.MESSAGES)
+                }
+            }
+            composable("${Routes.CONVERSATION}/{address}") { entry ->
+                val address = entry.arguments?.getString("address").orEmpty()
+                ConversationScreen(viewModel, address) {
+                    val name = viewModel.conversations.value
+                        .firstOrNull { com.wearos.ancsbridge.messages.MapFormats.sameAddress(it.address, address) }?.name ?: address
+                    navController.navigate("${Routes.REPLY}/${android.net.Uri.encode(address)}/${android.net.Uri.encode(name)}")
+                }
+            }
+            composable(Routes.COMPOSE) {
+                ComposeScreen(viewModel) { address, name ->
+                    navController.navigate("${Routes.REPLY}/${android.net.Uri.encode(address)}/${android.net.Uri.encode(name)}")
+                }
+            }
+            composable("${Routes.REPLY}/{address}/{name}") { entry ->
+                val address = entry.arguments?.getString("address").orEmpty()
+                val name = entry.arguments?.getString("name").orEmpty()
+                ReplyScreen(viewModel, address, name) {
+                    navController.popBackStack(Routes.MESSAGES, inclusive = false)
+                    navController.navigate("${Routes.CONVERSATION}/${android.net.Uri.encode(address)}")
+                }
+            }
         }
     }
 }
@@ -213,11 +257,15 @@ private fun HomeScreen(viewModel: MainViewModel, navigate: (String) -> Unit) {
     val healthPending by viewModel.healthPending.collectAsState()
     LaunchedEffect(Unit) { viewModel.activityRingsNow() }
     val rings by viewModel.activityRings.collectAsState()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    LaunchedEffect(Unit) { com.wearos.ancsbridge.model.PhoneInfo.load(context) }
+    val todayInfo by com.wearos.ancsbridge.model.PhoneInfo.current.collectAsState()
     HomeContent(
         state = state, hasBonded = hasBonded, nowPlaying = nowPlaying,
         workoutActive = workout !is com.wearos.ancsbridge.health.WorkoutState.Idle,
         healthPending = healthPending,
         rings = rings,
+        todayInfo = todayInfo,
         mediaAvailable = mediaAvailable, phoneTools = phoneTools, navigate = navigate,
         onClearAll = viewModel::clearAllNotifications, onDisconnect = viewModel::disconnect,
         onReconnect = viewModel::startService
@@ -232,6 +280,7 @@ internal fun HomeContent(
     workoutActive: Boolean,
     healthPending: Int,
     rings: com.wearos.ancsbridge.health.Rings,
+    todayInfo: com.wearos.ancsbridge.model.PhoneInfo = com.wearos.ancsbridge.model.PhoneInfo(),
     mediaAvailable: Boolean,
     phoneTools: Boolean,
     navigate: (String) -> Unit,
@@ -251,6 +300,11 @@ internal fun HomeContent(
                 NavButton(Icons.AutoMirrored.Rounded.DirectionsRun, Color(0xFF4C7A00), "Workout",
                     "Syncs to Apple Health") { navigate(Routes.WORKOUTS) }
             }
+        }
+        item { TodaySummaryButton(todayInfo) { navigate(Routes.TODAY) } }
+        item {
+            NavButton(Icons.AutoMirrored.Rounded.Chat, Color(0xFF34C759), "Messages",
+                "iMessage & SMS") { navigate(Routes.MESSAGES) }
         }
         item { ActivitySummaryButton(rings) { navigate(Routes.ACTIVITY) } }
         item {
