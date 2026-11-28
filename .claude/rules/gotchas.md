@@ -58,3 +58,5 @@
 
 29. **Never ship the debug APK to the watch**: debuggable Compose runs mostly interpreted and was visibly laggy (low FPS). Install `assembleRelease` (R8, baseline profiles, 4 MB vs 71 MB). Every build is signed with `app/sideload.keystore`; CI's per-run debug keys forced an uninstall (losing pairing) on every update.
 
+30. **Sideloaded iOS app lost HealthKit**: CI builds with `CODE_SIGNING_ALLOWED=NO`, so the binary carried no entitlements and Sideloadly/AltStore re-signed it without HealthKit ("This installation lacks HealthKit in its signature"). CI now ad-hoc signs the .app with `AncsBridge.entitlements` before zipping the IPA, and checks the entitlement is present.
+
