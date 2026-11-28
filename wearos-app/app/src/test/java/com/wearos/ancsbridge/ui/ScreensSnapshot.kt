@@ -49,12 +49,12 @@ class ScreensSnapshot {
 
     @Test
     fun homeConnected() = shot {
-        HomeContent(ConnectionState.Connected("Huy's iPhone"), true, song, true, true, {}, {}, {}, {})
+        HomeContent(ConnectionState.Connected("Huy's iPhone"), true, song, false, 2, true, true, {}, {}, {}, {})
     }
 
     @Test
     fun homeDisconnected() = shot {
-        HomeContent(ConnectionState.Disconnected(), true, NowPlaying(), false, false, {}, {}, {}, {})
+        HomeContent(ConnectionState.Disconnected(), true, NowPlaying(), false, 0, false, false, {}, {}, {}, {})
     }
 
     @Test
@@ -102,4 +102,35 @@ class ScreensSnapshot {
             }
         }
     }
+
+    private val running = com.wearos.ancsbridge.health.WorkoutState.Running(
+        kind = com.wearos.ancsbridge.health.WorkoutKind.OUTDOOR_RUN, paused = false,
+        checkpointMs = 1_000_000L, activeMsAtCheckpoint = 1_534_560L, heartRate = 148,
+        heartRateAvailable = true, kcal = 287.0, distanceM = 5230.0, speedMps = 3.1, gpsReady = true
+    )
+
+    @Test
+    fun workoutMetrics() = shot { WorkoutMetrics(running, staticNow = 1_000_000L) }
+
+    @Test
+    fun workoutControls() = shot {
+        LiveWorkoutContent(running, {}, {}, {}, null, null, {}, initialPage = 0)
+    }
+
+    @Test
+    fun workoutList() = shot { WorkoutListContent {} }
+
+    @Test
+    fun workoutSummary() = shot {
+        SummaryContent(
+            com.wearos.ancsbridge.health.WorkoutRecord(
+                kind = com.wearos.ancsbridge.health.WorkoutKind.OUTDOOR_RUN, startMs = 0, endMs = 1_900_000,
+                activeMs = 1_834_000, kcal = 312.0, distanceM = 5230.0, steps = 5100,
+                heartRate = listOf(1L to 140, 2L to 158), route = emptyList(), pauses = emptyList()
+            ), healthAvailable = true
+        ) {}
+    }
+
+    @Test
+    fun health() = shot { HealthContent(3, 0, false, false, true, {}, {}, 0) }
 }

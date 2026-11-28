@@ -49,6 +49,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val context = getApplication<Application>()
         context.startService(Intent(context, AncsService::class.java).setAction("phone_control").putExtra("code", code))
     }
+    // ---- Workouts & Apple Health ----
+    private val healthOutbox = com.wearos.ancsbridge.health.HealthOutbox(application)
+    val workoutState = com.wearos.ancsbridge.health.WorkoutService.state
+    val healthPending = com.wearos.ancsbridge.health.HealthOutbox.pending
+    val healthLastSync = com.wearos.ancsbridge.health.HealthOutbox.lastSync
+    val healthSyncing = AncsService.healthSyncing
+    val healthAvailable = AncsService.healthAvailable
+
+    fun startWorkout(kind: com.wearos.ancsbridge.health.WorkoutKind) =
+        com.wearos.ancsbridge.health.WorkoutService.start(getApplication(), kind)
+    fun pauseWorkout() = com.wearos.ancsbridge.health.WorkoutService.pause(getApplication())
+    fun resumeWorkout() = com.wearos.ancsbridge.health.WorkoutService.resume(getApplication())
+    fun endWorkout() = com.wearos.ancsbridge.health.WorkoutService.end(getApplication())
+    fun dismissWorkoutSummary() = com.wearos.ancsbridge.health.WorkoutService.dismissSummary()
+
+    fun syncHealthNow() {
+        val context = getApplication<Application>()
+        context.startService(Intent(context, AncsService::class.java).setAction(AncsService.ACTION_SYNC_HEALTH))
+    }
+
+    fun passiveHealthEnabled() = com.wearos.ancsbridge.health.PassiveHealthService.isEnabled(getApplication())
+
+    fun setPassiveHealth(enabled: Boolean, result: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            val on = com.wearos.ancsbridge.health.PassiveHealthService.setEnabled(getApplication(), enabled)
+            result(on)
+        }
+    }
+
     val sessionStats = AncsService.sessionStats
     val nowPlaying = AncsService.nowPlaying
     val mediaAvailable: StateFlow<Boolean> = AncsService.mediaAvailable

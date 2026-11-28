@@ -9,9 +9,8 @@
 - Persist bonded device list and per-watch notification category preferences
 - Only one watch active at a time (BLE limitation with ANCS)
 
-## Health Data Bridge
-- Transfer Wear OS health/fitness data to iPhone via BLE + HealthKit
-- Requires custom BLE service on both sides + HealthKit entitlement
+## Health Data Bridge (done in 1.2: workouts, heart rate, steps)
+- Not yet: SpO2, sleep, HRV, resting heart rate, VO2 max, workout goals and laps
 
 ## Quick Reply List Sync
 - The iOS app's editable reply list stays on the iPhone; the watch uses its hard-coded `QUICK_REPLIES`

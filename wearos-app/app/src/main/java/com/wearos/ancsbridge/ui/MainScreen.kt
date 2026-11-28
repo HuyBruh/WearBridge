@@ -23,6 +23,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.VolumeDown
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.automirrored.rounded.DirectionsRun
+import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.Bluetooth
 import androidx.compose.material.icons.rounded.ClearAll
 import androidx.compose.material.icons.rounded.History
@@ -97,12 +99,20 @@ private object Routes {
     const val IPHONE = "iphone"
     const val NOTIFICATIONS = "notifications"
     const val PAIR = "pair"
+    const val WORKOUTS = "workouts"
+    const val WORKOUT_LIVE = "workout_live"
+    const val HEALTH = "health"
 }
 
 /** Root: system time on top, swipe right to go back on every screen (native Wear OS). */
 @Composable
-fun MainScreen(viewModel: MainViewModel) {
+fun MainScreen(viewModel: MainViewModel, openWorkout: Boolean = false) {
     val navController = rememberSwipeDismissableNavController()
+    LaunchedEffect(openWorkout) {
+        if (openWorkout && viewModel.workoutState.value !is com.wearos.ancsbridge.health.WorkoutState.Idle) {
+            navController.navigate(Routes.WORKOUT_LIVE)
+        }
+    }
     AppScaffold(timeText = { TimeText() }) {
         SwipeDismissableNavHost(navController = navController, startDestination = Routes.HOME) {
             composable(Routes.HOME) { HomeScreen(viewModel) { navController.navigate(it) } }
@@ -110,6 +120,15 @@ fun MainScreen(viewModel: MainViewModel) {
             composable(Routes.IPHONE) { PhoneToolsScreen(viewModel) }
             composable(Routes.NOTIFICATIONS) { NotificationSettingsScreen(viewModel) }
             composable(Routes.PAIR) { PairScreen(viewModel) { navController.popBackStack() } }
+            composable(Routes.WORKOUTS) {
+                WorkoutListScreen(viewModel) {
+                    navController.navigate(Routes.WORKOUT_LIVE) { popUpTo(Routes.HOME) }
+                }
+            }
+            composable(Routes.WORKOUT_LIVE) {
+                LiveWorkoutScreen(viewModel) { navController.popBackStack(Routes.HOME, inclusive = false) }
+            }
+            composable(Routes.HEALTH) { HealthScreen(viewModel) }
         }
     }
 }
@@ -124,7 +143,7 @@ internal class WearListBuilder {
 
 /** A scrolling screen with curved scroll indicator and fisheye scaling, like system apps. */
 @Composable
-private fun ListScreen(build: WearListBuilder.() -> Unit) {
+internal fun ListScreen(build: WearListBuilder.() -> Unit) {
     val items = WearListBuilder().apply(build).items
     if (LocalInspectionMode.current) {
         // Previews/screenshot tests never run ScalingLazyColumn's first layout pass
@@ -163,8 +182,12 @@ private fun HomeScreen(viewModel: MainViewModel, navigate: (String) -> Unit) {
     val mediaAvailable by viewModel.mediaAvailable.collectAsState()
     val phoneTools by viewModel.phoneTools.collectAsState()
     val hasBonded = remember(state) { viewModel.hasBondedIPhone() }
+    val workout by viewModel.workoutState.collectAsState()
+    val healthPending by viewModel.healthPending.collectAsState()
     HomeContent(
         state = state, hasBonded = hasBonded, nowPlaying = nowPlaying,
+        workoutActive = workout !is com.wearos.ancsbridge.health.WorkoutState.Idle,
+        healthPending = healthPending,
         mediaAvailable = mediaAvailable, phoneTools = phoneTools, navigate = navigate,
         onClearAll = viewModel::clearAllNotifications, onDisconnect = viewModel::disconnect,
         onReconnect = viewModel::startService
@@ -176,6 +199,8 @@ internal fun HomeContent(
     state: ConnectionState,
     hasBonded: Boolean,
     nowPlaying: NowPlaying,
+    workoutActive: Boolean,
+    healthPending: Int,
     mediaAvailable: Boolean,
     phoneTools: Boolean,
     navigate: (String) -> Unit,
@@ -185,6 +210,23 @@ internal fun HomeContent(
 ) {
     ListScreen {
         item { StatusHeader(state, hasBonded) }
+
+        // Workouts work without the iPhone, like on Apple Watch.
+        item {
+            if (workoutActive) {
+                NavButton(Icons.AutoMirrored.Rounded.DirectionsRun, Color(0xFF4C7A00), "Workout in Progress",
+                    "Tap to return") { navigate(Routes.WORKOUT_LIVE) }
+            } else {
+                NavButton(Icons.AutoMirrored.Rounded.DirectionsRun, Color(0xFF4C7A00), "Workout",
+                    "Syncs to Apple Health") { navigate(Routes.WORKOUTS) }
+            }
+        }
+        item {
+            NavButton(Icons.Rounded.Favorite, Color(0xFFFF375F), "Apple Health",
+                if (healthPending > 0) "$healthPending waiting to sync" else "Heart rate, steps, workouts") {
+                navigate(Routes.HEALTH)
+            }
+        }
 
         when (state) {
             is ConnectionState.Connected -> {
@@ -300,7 +342,7 @@ private fun StatusHeader(state: ConnectionState, hasBonded: Boolean) {
 }
 
 @Composable
-private fun NavButton(
+internal fun NavButton(
     icon: ImageVector,
     tint: Color,
     label: String,
@@ -320,7 +362,7 @@ private fun NavButton(
 
 /** Colored circular icon, like the app icons in Apple Watch's settings lists. */
 @Composable
-private fun IconBadge(icon: ImageVector, tint: Color) {
+internal fun IconBadge(icon: ImageVector, tint: Color) {
     Box(
         modifier = Modifier.size(26.dp).clip(CircleShape).background(tint),
         contentAlignment = Alignment.Center
@@ -453,7 +495,7 @@ private fun mediaIconColors() = IconButtonDefaults.iconButtonColors(
 
 /** iOS-style switches: dark card, green track when on. */
 @Composable
-private fun appleSwitchColors() = SwitchButtonDefaults.switchButtonColors(
+internal fun appleSwitchColors() = SwitchButtonDefaults.switchButtonColors(
     checkedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
     checkedContentColor = Color.White,
     checkedSecondaryContentColor = MaterialTheme.colorScheme.onSurfaceVariant,

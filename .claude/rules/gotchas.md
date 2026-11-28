@@ -44,3 +44,7 @@
 
 22. **iOS hides ANCS per watch**: iPhone Settings › Bluetooth › ⓘ › "Share System Notifications" off = bonded but no ANCS service. After 3 discovery retries the watch shows that hint and keeps retrying with backoff.
 
+23. **HealthKit is unwritable while the iPhone is locked**: the companion app receives records in the background, so it must persist them before acking the watch and import later (`protectedDataDidBecomeAvailable`). Acking only after `HKHealthStore.save` would make the watch resend forever while the phone is in a pocket.
+
+24. **The Xcode project is committed, CI does not run xcodegen**: a new Swift file must also be added to `project.pbxproj` (build file, file reference, group, Sources phase), or CI builds without it.
+

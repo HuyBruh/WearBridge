@@ -18,7 +18,7 @@ targets:
         NSBluetoothAlwaysUsageDescription: "WearBridge needs Bluetooth to connect to your Pixel Watch and forward notifications."
         NSBluetoothPeripheralUsageDescription: "WearBridge needs Bluetooth to be discoverable by your Pixel Watch."
         NSCalendarsFullAccessUsageDescription: "Share the next three calendar events with your paired watch when you enable calendar sharing."
-        NSHealthUpdateUsageDescription: "Save timed workouts that you choose to sync from your watch."
+        NSHealthUpdateUsageDescription: "Save workouts, heart rate, steps and active energy recorded by your Pixel Watch."
         NSCameraUsageDescription: "Use your paired watch as a shutter while the camera is open."
         NSPhotoLibraryAddUsageDescription: "Save photos captured with the remote shutter."
         UIBackgroundModes:
@@ -29,8 +29,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.wearos.ancsbridge.companion
-        MARKETING_VERSION: "1.1"
-        CURRENT_PROJECT_VERSION: "2"
+        MARKETING_VERSION: "1.3"
+        CURRENT_PROJECT_VERSION: "4"
         SWIFT_VERSION: "5.9"
         TARGETED_DEVICE_FAMILY: "1"
         CODE_SIGN_ENTITLEMENTS: AncsBridge/AncsBridge.entitlements

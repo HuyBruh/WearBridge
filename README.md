@@ -23,6 +23,8 @@ iPhone (iOS 26)                       Wear OS Watch
 - **Real-time notification mirroring** — messages, emails, calls, calendar alerts, and more
 - **Apple Watch-style alerts** — round, brand-colored app badge on every alert (Zalo, Messages, Messenger, WhatsApp, Gmail…)
 - **Now Playing** — play/pause, next/previous and crown-controlled volume for whatever plays on the iPhone (Apple Media Service)
+- **Workouts → Apple Health** — Apple Workout-style app (walk, run, cycle, HIIT, strength, yoga…) with live heart rate, calories, distance, pace and GPS route; saved to Apple Health with route, heart rate and pauses
+- **All-day heart rate & steps → Apple Health** (opt-in), queued on the watch until the iPhone app stores them
 - **Native Wear OS UI** — Material 3 for Wear OS, swipe-to-go-back, curved time text, iOS-style switches
 - **Notification Settings** — turn future alerts from observed apps on or off and hide message previews. Incoming call screens are separate.
 - **75+ app icon mappings** — WhatsApp, Slack, Gmail, Instagram, Telegram, Discord, and many more show their own icons (Material Design, 25% padded for Wear OS)

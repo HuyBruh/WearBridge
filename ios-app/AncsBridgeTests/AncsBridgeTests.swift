@@ -1,4 +1,5 @@
 import XCTest
+import HealthKit
 @testable import AncsBridge
 
 final class AncsBridgeTests: XCTestCase {
@@ -10,11 +11,23 @@ final class AncsBridgeTests: XCTestCase {
         XCTAssertEqual(draft.body, "Đến rồi 👍")
     }
 
-    func testWorkoutRejectsInvalidInputsAndKeepsDuration() {
-        let id = UUID()
-        XCTAssertNil(TimedWorkout(id: id, kind: "Other", start: 1000, end: 2000).sample())
-        XCTAssertNil(TimedWorkout(id: id, kind: "Run", start: 4000, end: 2000).sample())
-        XCTAssertEqual(TimedWorkout(id: id, kind: "Run", start: 1000, end: 31000).sample()?.duration, 30)
+    func testWatchWorkoutActivitiesMapToHealthKit() {
+        XCTAssertEqual(WatchHealthImporter.activityType("running"), .running)
+        XCTAssertEqual(WatchHealthImporter.activityType("traditionalStrengthTraining"), .traditionalStrengthTraining)
+        XCTAssertEqual(WatchHealthImporter.activityType("unknown"), .other)
+        XCTAssertEqual(WatchHealthImporter.distanceType(.cycling), HKQuantityType(.distanceCycling))
+        XCTAssertNil(WatchHealthImporter.distanceType(.yoga))
+    }
+
+    func testWatchHealthRecordsAreRefusedWhileSyncIsOff() {
+        let previous = UserDefaults.standard.bool(forKey: WatchHealthImporter.enabledKey)
+        defer { UserDefaults.standard.set(previous, forKey: WatchHealthImporter.enabledKey) }
+        UserDefaults.standard.set(false, forKey: WatchHealthImporter.enabledKey)
+        let record = #"{"type":"workout","id":"abc","start":1000,"end":2000}"#
+        XCTAssertFalse(WatchHealthImporter.shared.receive(Data(record.utf8)))
+        UserDefaults.standard.set(true, forKey: WatchHealthImporter.enabledKey)
+        XCTAssertFalse(WatchHealthImporter.shared.receive(Data("not json".utf8)))
+        XCTAssertFalse(WatchHealthImporter.shared.receive(Data(#"{"type":"other","id":"x"}"#.utf8)))
     }
 
     // MARK: - Quick reply URL

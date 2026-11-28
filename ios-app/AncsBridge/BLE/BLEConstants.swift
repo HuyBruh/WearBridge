@@ -15,7 +15,8 @@ enum BLEConstants {
     /// Characteristic: call state (readable, notifiable — pushes call state to watch)
     static let callStateCharacteristicUUID = CBUUID(string: "A0E3D5B4-4C6F-4E8A-9B2D-7F1E3A5C8D0B")
 
-    static let workoutUUID = CBUUID(string: "A0E3D5B7-4C6F-4E8A-9B2D-7F1E3A5C8D0B")
+    /// Chunked health records from the watch: [flags][payload], flags 0x01 = first, 0x02 = last.
+    static let healthUUID = CBUUID(string: "A0E3D5B8-4C6F-4E8A-9B2D-7F1E3A5C8D0B")
     static let toolsUUID = CBUUID(string: "A0E3D5B6-4C6F-4E8A-9B2D-7F1E3A5C8D0B")
     static let draftUUID = CBUUID(string: "A0E3D5B5-4C6F-4E8A-9B2D-7F1E3A5C8D0B")
 

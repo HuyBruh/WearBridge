@@ -67,6 +67,10 @@ class AncsService : Service() {
         const val EXTRA_MEDIA_COMMAND = "media_command"
         const val ACTION_DRAFT = "com.wearos.ancsbridge.DRAFT"
         const val ACTION_CLEAR_ALL = "com.wearos.ancsbridge.CLEAR_ALL"
+        const val ACTION_SYNC_HEALTH = "com.wearos.ancsbridge.SYNC_HEALTH"
+        /** Apple Health sync status for the UI: true while records are being sent. */
+        val healthSyncing = MutableStateFlow(false)
+        val healthAvailable = MutableStateFlow(false)
         const val EXTRA_DEVICE_ADDRESS = "device_address"
         const val EXTRA_ACTION_ID = "action_id"
         const val EXTRA_QUICK_REPLY_TEXT = "quick_reply_text"
@@ -159,7 +163,14 @@ class AncsService : Service() {
             }
         }
 
-        scope.launch { connectionManager.phoneTools.collect { phoneTools.value = it } }
+        scope.launch {
+            connectionManager.phoneTools.collect {
+                phoneTools.value = it
+                // The companion service was just found: deliver queued workouts/health data.
+                healthAvailable.value = it && connectionManager.canSyncHealth
+                if (it) syncHealth()
+            }
+        }
         scope.launch { connectionManager.phoneSummary.collect { phoneSummary.value = it } }
         scope.launch { connectionManager.supportedCommands.collect { supportedMediaCommands.value = it } }
 
@@ -288,6 +299,7 @@ class AncsService : Service() {
                     }
                 }
             }
+            ACTION_SYNC_HEALTH -> syncHealth()
             ACTION_CLEAR_ALL -> {
                 Log.i(TAG, "Clearing all notifications (${activeNotificationIds.size} tracked)")
                 activeNotificationIds.forEach { id ->
@@ -355,6 +367,29 @@ class AncsService : Service() {
         sendBroadcast(Intent(IncomingCallActivity.ACTION_CALL_ENDED).apply {
             setPackage(packageName)
         })
+    }
+
+    /** Drains the health outbox to the iPhone app, oldest first, one record at a time. */
+    private fun syncHealth() {
+        if (healthSyncing.value || !connectionManager.canSyncHealth) return
+        healthSyncing.value = true
+        scope.launch {
+            try {
+                val outbox = com.wearos.ancsbridge.health.HealthOutbox(this@AncsService)
+                while (true) {
+                    val file = outbox.oldest() ?: break
+                    val bytes = runCatching { file.readBytes() }.getOrNull()
+                    if (bytes == null || bytes.isEmpty()) { outbox.remove(file); continue }
+                    if (!connectionManager.sendHealthRecord(bytes)) {
+                        Log.w(TAG, "Health record not accepted by iPhone; will retry later")
+                        break
+                    }
+                    outbox.remove(file)
+                }
+            } finally {
+                healthSyncing.value = false
+            }
+        }
     }
 
     private fun tryReconnectBonded() {

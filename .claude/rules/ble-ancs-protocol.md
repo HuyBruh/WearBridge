@@ -79,6 +79,16 @@ Crown rotation on the Now Playing screen sends Volume Up/Down.
 | Quick Reply | `A0E3D5B3-4C6F-4E8A-9B2D-7F1E3A5C8D0B` | Write — watch sends `"callerName\|replyText"` |
 | Call State | `A0E3D5B4-4C6F-4E8A-9B2D-7F1E3A5C8D0B` | Read/Notify — iPhone pushes call state (0x00=idle, 0x01=ringing, 0x02=active, 0x03=ended) |
 
+| Health | `A0E3D5B8-4C6F-4E8A-9B2D-7F1E3A5C8D0B` | Write (encrypted) — chunked health records: `[flags][payload]`, flags 0x01 first, 0x02 last |
+
+## Workouts & Apple Health
+
+- Watch: `health/WorkoutService` runs Health Services `ExerciseClient` (HR, calories, distance, steps, GPS) in a `health|location` foreground service with an Ongoing Activity chip. Workouts ≥ 60 s go to `HealthOutbox` (one JSON file per record in `filesDir/health_outbox`).
+- `PassiveHealthService` (opt-in, watch → Apple Health screen) receives all-day `HEART_RATE_BPM` and `STEPS_DAILY`; `StepDeltas` turns daily totals into interval samples.
+- `AncsService.syncHealth()` drains the outbox oldest-first whenever the companion service appears (and on `ACTION_SYNC_HEALTH`). A record is deleted only after the iPhone acks its last chunk.
+- iPhone: `PeripheralManager.handleHealthChunk` reassembles; `WatchHealthImporter.receive` writes the record to Application Support before acking, then imports into HealthKit (`HKWorkoutBuilder` + samples + pause events + `HKWorkoutRouteBuilder`). Locked iPhone (`errorDatabaseInaccessible`) → retried on `protectedDataDidBecomeAvailable`. Dedupe: workouts by `HKMetadataKeySyncIdentifier` query, samples by per-sample sync identifiers.
+- Toggle key on iPhone is still `syncWorkouts` (Settings → Apple Health); when off, the first chunk is refused and the watch keeps the record.
+
 ## Quick Reply Flow
 
 1. Watch: user taps quick reply → ANCS negative action + BLE write to quick reply characteristic

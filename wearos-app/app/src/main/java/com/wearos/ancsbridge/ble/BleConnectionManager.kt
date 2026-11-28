@@ -69,6 +69,10 @@ class BleConnectionManager(private val context: Context) {
         private val STATUS_UUID = UUID.fromString("A0E3D5B2-4C6F-4E8A-9B2D-7F1E3A5C8D0B")
         private val DRAFT_UUID = UUID.fromString("A0E3D5B5-4C6F-4E8A-9B2D-7F1E3A5C8D0B")
         private val TOOLS_UUID = UUID.fromString("A0E3D5B6-4C6F-4E8A-9B2D-7F1E3A5C8D0B")
+        /** Chunked health records for Apple Health (workouts, heart rate, steps). */
+        private val HEALTH_UUID = UUID.fromString("A0E3D5B8-4C6F-4E8A-9B2D-7F1E3A5C8D0B")
+        private const val CHUNK_FIRST = 0x01
+        private const val CHUNK_LAST = 0x02
 
         /**
          * The bonded device that last gave us an ANCS session. Name matching alone misses
@@ -548,6 +552,30 @@ class BleConnectionManager(private val context: Context) {
         val value = read(session, char) ?: return false
         phoneSummary.value = value.decodeToString().take(512)
         return true
+    }
+
+    val canSyncHealth: Boolean get() = companionCharacteristic(HEALTH_UUID) != null
+
+    /**
+     * Sends one health record as a sequence of acknowledged chunks:
+     * [flags][payload…], flags bit0 = first chunk, bit1 = last chunk. The iPhone answers
+     * the last chunk only after the record is safely stored, so `true` means delivered.
+     */
+    suspend fun sendHealthRecord(data: ByteArray): Boolean {
+        val session = gatt ?: return false
+        val char = companionCharacteristic(HEALTH_UUID) ?: return false
+        val chunkSize = (minOf(512, mtuBytes - 3) - 1).coerceAtLeast(19)
+        var offset = 0
+        while (true) {
+            val end = minOf(offset + chunkSize, data.size)
+            var flags = 0
+            if (offset == 0) flags = flags or CHUNK_FIRST
+            if (end == data.size) flags = flags or CHUNK_LAST
+            val chunk = byteArrayOf(flags.toByte()) + data.copyOfRange(offset, end)
+            if (!write(session, char, chunk)) return false
+            if (end == data.size) return true
+            offset = end
+        }
     }
 
     /** Quick reply payload "callerName|replyText" for the iPhone app's Shortcut. */

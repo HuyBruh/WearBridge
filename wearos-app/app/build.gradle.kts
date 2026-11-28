@@ -14,8 +14,8 @@ android {
         applicationId = "com.wearos.ancsbridge"
         minSdk = 33 // Wear OS 4
         targetSdk = 35
-        versionCode = 3
-        versionName = "1.2"
+        versionCode = 4
+        versionName = "1.3"
     }
 
     buildTypes {
@@ -71,6 +71,11 @@ dependencies {
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")
     ksp("androidx.room:room-compiler:2.6.1")
+
+    // Health Services (workouts, heart rate, passive steps) + ongoing activity chip
+    implementation("androidx.health:health-services-client:1.1.0")
+    implementation("androidx.wear:wear-ongoing:1.1.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-guava:1.9.0")
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")

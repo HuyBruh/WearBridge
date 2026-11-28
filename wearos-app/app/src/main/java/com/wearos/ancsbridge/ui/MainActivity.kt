@@ -13,6 +13,10 @@ import com.wearos.ancsbridge.viewmodel.MainViewModel
 
 class MainActivity : ComponentActivity() {
 
+    companion object {
+        const val EXTRA_OPEN_WORKOUT = "open_workout"
+    }
+
     private val viewModel: MainViewModel by viewModels()
 
     private val permissionLauncher = registerForActivityResult(
@@ -30,8 +34,19 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             AncsBridgeTheme {
-                MainScreen(viewModel = viewModel)
+                MainScreen(
+                    viewModel = viewModel,
+                    openWorkout = intent?.getBooleanExtra(EXTRA_OPEN_WORKOUT, false) == true
+                )
             }
+        }
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.getBooleanExtra(EXTRA_OPEN_WORKOUT, false)) {
+            setContent { AncsBridgeTheme { MainScreen(viewModel = viewModel, openWorkout = true) } }
         }
     }
 

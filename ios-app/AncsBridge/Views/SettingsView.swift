@@ -15,6 +15,7 @@ struct SettingsView: View {
     @State private var toolsMessage = ""
     @State private var healthIssue: String?
     @State private var requestingHealth = false
+    @ObservedObject private var healthImporter = WatchHealthImporter.shared
 
     var body: some View {
         NavigationStack {
@@ -26,7 +27,7 @@ struct SettingsView: View {
                         Label {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text("Apple Health").foregroundStyle(.primary)
-                                Text(requestingHealth ? "Requesting access…" : (syncWorkouts ? "Workout sync on · tap to pause" : "Connect to save workouts"))
+                                Text(requestingHealth ? "Requesting access…" : (syncWorkouts ? "Saving watch workouts, heart rate & steps · tap to pause" : "Save watch workouts, heart rate & steps"))
                                     .font(.footnote)
                                     .foregroundStyle(.secondary)
                             }
@@ -35,6 +36,20 @@ struct SettingsView: View {
                         }
                     }
                     .disabled(requestingHealth)
+                    if syncWorkouts {
+                        LabeledContent("Workouts imported", value: "\(healthImporter.workoutsImported)")
+                        if healthImporter.pendingCount > 0 {
+                            LabeledContent("Waiting for Health", value: "\(healthImporter.pendingCount)")
+                        }
+                        if let last = healthImporter.lastImport {
+                            LabeledContent("Last import", value: last.formatted(.relative(presentation: .named)))
+                        }
+                        if let issue = healthImporter.lastIssue {
+                            Label(issue, systemImage: "exclamationmark.triangle")
+                                .font(.footnote)
+                                .foregroundStyle(.orange)
+                        }
+                    }
                     if let healthIssue {
                         Label(healthIssue, systemImage: "info.circle")
                             .font(.footnote)
@@ -144,9 +159,11 @@ struct SettingsView: View {
 
         let store = HKHealthStore()
         let workout = HKObjectType.workoutType()
-        let status = store.authorizationStatus(for: workout)
-        if status == .sharingAuthorized {
+        let types = WatchHealthImporter.shareTypes
+        let allAuthorized = types.allSatisfy { store.authorizationStatus(for: $0) == .sharingAuthorized }
+        if allAuthorized {
             syncWorkouts.toggle()
+            if syncWorkouts { WatchHealthImporter.shared.importPending() }
             return
         }
 
@@ -154,10 +171,12 @@ struct SettingsView: View {
         requestingHealth = true
         defer { requestingHealth = false }
         do {
-            try await store.requestAuthorization(toShare: [workout], read: [])
+            try await store.requestAuthorization(toShare: types, read: [])
             syncWorkouts = store.authorizationStatus(for: workout) == .sharingAuthorized
             if !syncWorkouts {
                 healthIssue = "In Apple Health, open your profile, find WearBridge under Apps and Services, and allow Workouts."
+            } else {
+                WatchHealthImporter.shared.importPending()
             }
         } catch {
             let failure = error as NSError

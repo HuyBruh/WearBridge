@@ -31,6 +31,8 @@ class PeripheralManager: NSObject, ObservableObject {
     private var statusCharacteristic: CBMutableCharacteristic?
     private var callStateCharacteristic: CBMutableCharacteristic?
     private var readSnapshots: [UUID: Data] = [:]
+    /// Health records being reassembled, per connected watch.
+    private var healthBuffers: [UUID: Data] = [:]
     private var serviceAdded = false
     private var scanTimer: Timer?
 
@@ -247,7 +249,7 @@ class PeripheralManager: NSObject, ObservableObject {
         )
 
         UIDevice.current.isBatteryMonitoringEnabled = true
-        let workout = CBMutableCharacteristic(type: BLEConstants.workoutUUID, properties: [.write],
+        let health = CBMutableCharacteristic(type: BLEConstants.healthUUID, properties: [.write],
             value: nil, permissions: [.writeEncryptionRequired])
         let tools = CBMutableCharacteristic(type: BLEConstants.toolsUUID, properties: [.read, .write],
                                             value: nil, permissions: [.readEncryptionRequired, .writeEncryptionRequired])
@@ -264,7 +266,7 @@ class PeripheralManager: NSObject, ObservableObject {
             type: BLEConstants.companionServiceUUID,
             primary: true
         )
-        companionService?.characteristics = [statusCharacteristic!, quickReplyCharacteristic, callStateCharacteristic!, draft, tools, workout]
+        companionService?.characteristics = [statusCharacteristic!, quickReplyCharacteristic, callStateCharacteristic!, draft, tools, health]
 
         peripheralManager.add(companionService!)
         serviceAdded = true
@@ -354,17 +356,8 @@ extension PeripheralManager: CBPeripheralManagerDelegate {
 
     func peripheralManager(_ peripheral: CBPeripheralManager, didReceiveWrite requests: [CBATTRequest]) {
         guard let first = requests.first else { return }
-        if first.characteristic.uuid == BLEConstants.workoutUUID {
-            guard requests.count == 1, first.offset == 0, let data = first.value, data.count <= 512,
-                  let input = try? JSONDecoder().decode(TimedWorkout.self, from: data),
-                  let workout = input.sample(), UserDefaults.standard.bool(forKey: "syncWorkouts"),
-                  HKHealthStore.isHealthDataAvailable() else {
-                peripheral.respond(to: first, withResult: .requestNotSupported)
-                return
-            }
-            HKHealthStore().save(workout) { ok, _ in
-                DispatchQueue.main.async { peripheral.respond(to: first, withResult: ok ? .success : .unlikelyError) }
-            }
+        if first.characteristic.uuid == BLEConstants.healthUUID {
+            handleHealthChunk(first, peripheral: peripheral, count: requests.count)
             return
         }
         if first.characteristic.uuid == BLEConstants.toolsUUID {
@@ -415,6 +408,43 @@ extension PeripheralManager: CBPeripheralManagerDelegate {
         }
     }
 
+    /// Reassembles a health record sent as acknowledged chunks; the last chunk is
+    /// acknowledged only once the record is stored, so the watch can then delete it.
+    private func handleHealthChunk(_ request: CBATTRequest, peripheral: CBPeripheralManager, count: Int) {
+        guard count == 1, request.offset == 0, let chunk = request.value, let flags = chunk.first else {
+            peripheral.respond(to: request, withResult: .invalidAttributeValueLength)
+            return
+        }
+        let key = request.central.identifier
+        if flags & 0x01 != 0 {
+            // Refuse early (before the whole record is sent) when Health sync is off.
+            guard WatchHealthImporter.isEnabled else {
+                healthBuffers[key] = nil
+                peripheral.respond(to: request, withResult: .requestNotSupported)
+                return
+            }
+            healthBuffers[key] = Data()
+        }
+        guard var buffer = healthBuffers[key] else {
+            peripheral.respond(to: request, withResult: .unlikelyError)
+            return
+        }
+        buffer.append(chunk.dropFirst())
+        guard buffer.count <= 512 * 1024 else {
+            healthBuffers[key] = nil
+            peripheral.respond(to: request, withResult: .insufficientResources)
+            return
+        }
+        if flags & 0x02 != 0 {
+            healthBuffers[key] = nil
+            let stored = WatchHealthImporter.shared.receive(buffer)
+            peripheral.respond(to: request, withResult: stored ? .success : .unlikelyError)
+        } else {
+            healthBuffers[key] = buffer
+            peripheral.respond(to: request, withResult: .success)
+        }
+    }
+
     private func handleQuickReply(_ payload: String) {
         DispatchQueue.main.async {
             QuickReplyLauncher.shared.deliver(payload)
@@ -426,7 +456,7 @@ extension PeripheralManager: CBPeripheralManagerDelegate {
         if let services = dict[CBPeripheralManagerRestoredStateServicesKey] as? [CBMutableService] {
             if let service = services.first(where: { $0.uuid == BLEConstants.companionServiceUUID }),
                let characteristics = service.characteristics,
-               characteristics.contains(where: { $0.uuid == BLEConstants.workoutUUID }),
+               characteristics.contains(where: { $0.uuid == BLEConstants.healthUUID }),
                characteristics.contains(where: { $0.uuid == BLEConstants.toolsUUID }),
                characteristics.contains(where: { $0.uuid == BLEConstants.draftUUID }) {
                 companionService = service
@@ -474,21 +504,4 @@ struct DiscoveredWatch: Identifiable {
 struct PersistedWatch: Codable {
     let id: String // UUID string
     let name: String
-}
-
-struct TimedWorkout: Decodable {
-    let id: UUID
-    let kind: String
-    let start: Double
-    let end: Double
-
-    func sample() -> HKWorkout? {
-        let types: [String: HKWorkoutActivityType] = ["Walk": .walking, "Run": .running, "Cycle": .cycling]
-        guard let type = types[kind], start.isFinite, end.isFinite, end > start, start > 0,
-              end / 1000 <= Date().timeIntervalSince1970 + 300 else { return nil }
-        return HKWorkout(activityType: type, start: Date(timeIntervalSince1970: start / 1000),
-                         end: Date(timeIntervalSince1970: end / 1000), duration: (end - start) / 1000,
-                         totalEnergyBurned: nil, totalDistance: nil,
-                         metadata: [HKMetadataKeySyncIdentifier: "wearbridge." + id.uuidString, HKMetadataKeySyncVersion: 1])
-    }
 }
