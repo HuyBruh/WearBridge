@@ -21,18 +21,46 @@ iPhone (iOS 26)                       Wear OS Watch
 ## Features
 
 - **Real-time notification mirroring** — messages, emails, calls, calendar alerts, and more
+- **Apple Watch-style alerts** — round, brand-colored app badge on every alert (Zalo, Messages, Messenger, WhatsApp, Gmail…)
+- **Now Playing** — play/pause, next/previous and crown-controlled volume for whatever plays on the iPhone (Apple Media Service)
+- **Workouts → Apple Health** — Apple Workout-style app (walk, run, cycle, HIIT, strength, yoga…) with live heart rate, calories, distance, pace and GPS route; saved to Apple Health with route, heart rate and pauses
+- **All-day heart rate & steps → Apple Health** (opt-in), queued on the watch until the iPhone app stores them
+- **Apple Health & Fitness sync** — steps, distance, floors, active/resting calories, heart rate and sleep from the Pixel go to Apple Health; the iPhone Fitness app's Move ring uses them
+- **Contact photos & album art** — sender photos on notifications, calls and Messages; artwork on Now Playing
+- **Workout goals & splits** — time/distance/calorie goals with a progress ring, km split taps, segments
+- **Tiles & complications** — one-tap Workout tile, iPhone battery complication
+- **Quick replies from your iPhone list** — on the call screen and as reply chips on Messages alerts
+- **Messages (iMessage & SMS)** — conversations, reply and compose from the watch over Bluetooth MAP (the profile iOS offers car kits), with contacts via PBAP; replying to a Messages alert sends directly
+- **Today** — weather, calendar and reminders from the iPhone, with a tile and Weather / Next Event complications; tick reminders off on the watch
+- **Sleep, resting heart rate, VO₂ max, running form → Apple Health**
+- **Native Wear OS UI** — Material 3 for Wear OS, swipe-to-go-back, curved time text, iOS-style switches
+- **Notification Settings** — turn future alerts from observed apps on or off and hide message previews. Incoming call screens are separate.
 - **75+ app icon mappings** — WhatsApp, Slack, Gmail, Instagram, Telegram, Discord, and many more show their own icons (Material Design, 25% padded for Wear OS)
 - **Incoming call overlay** — integrated with Android Telecom framework (ConnectionService) for system-level call UI that shows over charging screen and lock screen, with Answer, Decline, and Quick Reply
 - **WhatsApp/FaceTime call detection** — detects VoIP calls via message content heuristics
-- **Smart notification filtering** — skips pre-existing notifications on reconnect, 60-second grace period to avoid vibration storms
+- **Smart notification filtering** — coalesces updates, prioritizes new alerts, and optionally restores up to 20 outstanding alerts quietly on reconnect
 - **Heads-up overlays** — PRIORITY_HIGH + IMPORTANCE_HIGH channels for reliable notification popups
 - **Auto-reconnection** — exponential backoff with `autoConnect` for bonded devices
 - **Boot persistence** — service auto-starts on watch reboot
 - **Haptic feedback** — category-aware vibration patterns via direct Vibrator API (50ms for messages, double-tap for calls)
+- **iPhone media controls** — show the track and artist and expose available player commands including volume and skipping over Apple Media Service when the iPhone exposes the service
 - **No cloud dependency** — everything runs over local BLE
 - **iOS companion app** — single-screen status UI with auto-detection of connected watches, "How it Works" explainer, and iOS 26 icon theming
 
-## Tested Hardware
+## WearBridge 1.1 on Pixel Watch
+
+Install the Wear OS APK over the previous WearBridge build. On iPhone enable Share System Notifications under the watch in Bluetooth settings. Enable Messages in Notification Center and permit notifications on the watch. Under Notification Settings, the session counters distinguish events received, alert posts, and response timeouts. Quiet catch-up uses only events iOS republishes. Enable Sync dismissals to mirror a swipe when iOS offers a recognized clear/dismiss action in English or Vietnamese. Some alerts are suppressed by Focus, per-app settings, or the notification channel on the watch.
+
+With the matching iOS companion:
+
+- Use **Draft reply** on a Messages alert, then open **Drafts** on the iPhone, choose the recipient and send. An encrypted write must reach the companion. Drafts are limited by the negotiated Bluetooth packet size and available storage. Text-entry actions require previews to be enabled. The notification title does not identify a verified iMessage recipient or group.
+- **Battery & agenda** reads iPhone battery and, after opt-in, up to three events in the next 24 hours. **Ping iPhone** needs permission for local notifications and follows system sound and Focus settings.
+- Open **Settings → Open remote camera** on iPhone before using **Camera shutter** on the watch. Allow Camera and Add Photos. The phone displays the viewfinder.
+- **Workouts** records timed walks, runs and bike rides offline. Enable workout import in iPhone Settings inside WearBridge, then select **Sync to Apple Health** on the watch. A successful HealthKit write removes the watch copy. The companion requires a provisioning profile with HealthKit for this feature. Only activity type and elapsed duration are transferred.
+
+The watch APK can run without the extra iOS features. The upstream hardware list below predates 1.1. This build requires physical testing for latency, battery life, media-player behavior, background execution and reconnection.
+
+## Upstream tested hardware
 
 | Device | Role |
 |--------|------|
@@ -77,7 +105,8 @@ ANCS is a system-level BLE service built into iOS. Any bonded BLE accessory can 
 
 Every push to `main` and every pull request is built by [GitHub Actions](https://github.com/k97/WearBridge/actions/workflows/ci.yml). Open a green run and download from **Artifacts**:
 
-- `WearBridge-wearos-debug-apk`: install with `adb install -r app-debug.apk`
+- `WearBridge-wearos-release-apk`: **install this one** with `adb install -r app-release.apk` (optimised; the debug APK is much slower on a watch)
+- `WearBridge-wearos-debug-apk`: for development with a debugger
 - `WearBridge-ios-unsigned-ipa`: unsigned, so re-sign it with your own Apple ID in a sideloading tool (AltStore, SideStore, Sideloadly)
 
 Artifacts are kept for 14 days.
@@ -88,7 +117,13 @@ Needs JDK 17 and the Android SDK (platform 35).
 
 ```bash
 cd wearos-app
-./gradlew testDebugUnitTest assembleDebug
+./gradlew testDebugUnitTest assembleRelease
+```
+
+Both build types are signed with the committed `app/sideload.keystore` (a public sideloading key), so any build installs over the previous one. After installing, optionally precompile for the smoothest UI:
+
+```bash
+adb shell cmd package compile -m speed-profile -f com.wearos.ancsbridge
 ```
 
 Install on watch via ADB:

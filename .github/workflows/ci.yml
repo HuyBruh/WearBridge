@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   wearos:
-    name: Wear OS (unit tests + debug APK)
+    name: Wear OS (unit tests + release/debug APKs)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:
@@ -34,10 +34,21 @@ jobs:
       - name: Unit tests
         run: ./gradlew testDebugUnitTest
 
-      - name: Build debug APK
-        run: ./gradlew assembleDebug
+      - name: Build release and debug APKs
+        run: ./gradlew assembleRelease assembleDebug
 
-      - name: Upload APK
+      # The one to install: R8-optimised and not debuggable (debug Compose builds are
+      # several times slower on a watch). Both are signed with the committed sideload key,
+      # so every build installs over the previous one.
+      - name: Upload release APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: WearBridge-wearos-release-apk
+          path: wearos-app/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload debug APK
         uses: actions/upload-artifact@v7
         with:
           name: WearBridge-wearos-debug-apk
@@ -53,7 +64,7 @@ jobs:
           path: wearos-app/app/build/reports/tests/
 
   ios:
-    name: iOS companion (unit tests + unsigned device build)
+    name: iOS companion (unit tests + sideload IPA)
     runs-on: macos-15
     timeout-minutes: 30
     defaults:
@@ -87,11 +98,16 @@ jobs:
             -derivedDataPath "$RUNNER_TEMP/dd-device" \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= DEVELOPMENT_TEAM=
 
-      # Unsigned: sideload tools (AltStore, SideStore, Sideloadly) re-sign it with your Apple ID.
-      - name: Package unsigned IPA
+      # Sideload tools (AltStore, SideStore, Sideloadly) re-sign the app with your Apple ID
+      # using the entitlements found in the binary. A build with signing disabled has none,
+      # so HealthKit was missing after sideloading: ad-hoc sign with the entitlements first.
+      - name: Package IPA (ad-hoc signed with entitlements)
         run: |
           set -euo pipefail
           APP="$RUNNER_TEMP/dd-device/Build/Products/Release-iphoneos/AncsBridge.app"
+          codesign --force --sign - --timestamp=none \
+            --entitlements AncsBridge/AncsBridge.entitlements "$APP"
+          codesign -d --entitlements - "$APP" | tee /dev/stderr | grep -q com.apple.developer.healthkit
           mkdir -p "$RUNNER_TEMP/pkg/Payload" "$GITHUB_WORKSPACE/artifacts"
           ditto "$APP" "$RUNNER_TEMP/pkg/Payload/AncsBridge.app"
           (cd "$RUNNER_TEMP/pkg" && zip -qry "$GITHUB_WORKSPACE/artifacts/WearBridge-unsigned.ipa" Payload)

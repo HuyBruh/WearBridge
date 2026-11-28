@@ -23,7 +23,9 @@
 ## Reconnection
 
 - `autoConnect=true` in `connectGatt()` for bonded devices (chipset whitelist, battery efficient)
-- Exponential backoff: 3s → 6s → 12s → 30s cap
+- Exponential backoff: 2s → 4s → 8s → … → 30s cap; reset once an ANCS session is active
+- All GATT operations are serialized by `runOperation` (see gotcha #20); the session setup (DS → NS → GAP name → companion → AMS) is one coroutine
+- `onServiceChanged` (companion app started/stopped) → disconnect and reconnect after 500 ms
 - `START_STICKY` service + `BootReceiver` for persistence
 - `getBondedIPhone()` matches device names containing "iPhone", "AncsBrid", "AncsBridge", "WearBrid", "WearBridge"
 - GAP Device Name characteristic (0x2A00) read after ANCS connects for real iPhone name
@@ -33,8 +35,8 @@
 
 ## Silent/Pre-existing Notification Handling
 
-- Pre-existing notifications (`EVENT_FLAG_PRE_EXISTING`) are skipped at NS event level — no GATT writes, no haptics
-- 60-second reconnection grace period skips all non-call NS events to avoid vibration storms
+- Pre-existing notifications (`EVENT_FLAG_PRE_EXISTING`) are skipped at NS event level — no GATT writes, no haptics — unless the user turns on "Missed Alerts" (off by default), which posts them on the silent channel
+- No time-based grace period: genuinely new alerts right after a reconnect are shown
 - **Never use `setNotificationSilent()`** — it kills heads-up overlays on Wear OS
 
 ## Notification Channels
@@ -60,6 +62,17 @@ When a call is answered on the iPhone, the watch overlay transitions from "Incom
 2. **ANCS MODIFIED**: NS event with EventID=1 for active call UID triggers overlay transition.
 3. **Safety timeout**: 45-second auto-dismiss if no events arrive.
 
+## Apple Media Service (Now Playing)
+
+| Characteristic | UUID | Role |
+|---|---|---|
+| Remote Command | `9B3C81D8-57B1-4A8A-B8DF-0E56F7CA51C2` | Notify = supported command IDs; write = send command |
+| Entity Update | `2F7CABCE-808D-411F-9A0C-BB92BA96C102` | Write `[0,0,1,2]` (player name, playback info, volume) and `[2,0,2]` (artist, title); notify = updates |
+
+Crown rotation on the Now Playing screen sends Volume Up/Down.
+
+`media/PhoneMediaSession` mirrors AMS into a local `MediaSessionCompat` (metadata, playing/paused, remote `VolumeProviderCompat` → AMS volume) with a MediaStyle notification and an Ongoing Activity chip while playing, so Wear OS shows its media controls without opening the app.
+
 ## Companion Service Characteristics
 
 | Characteristic | UUID | Role |
@@ -68,13 +81,50 @@ When a call is answered on the iPhone, the watch overlay transitions from "Incom
 | Quick Reply | `A0E3D5B3-4C6F-4E8A-9B2D-7F1E3A5C8D0B` | Write — watch sends `"callerName\|replyText"` |
 | Call State | `A0E3D5B4-4C6F-4E8A-9B2D-7F1E3A5C8D0B` | Read/Notify — iPhone pushes call state (0x00=idle, 0x01=ringing, 0x02=active, 0x03=ended) |
 
+| Quick Replies | `A0E3D5B9-4C6F-4E8A-9B2D-7F1E3A5C8D0B` | Read (encrypted) — JSON array of the iPhone app's quick replies; watch caches it in `QuickReplies` and uses it on the call screen and as reply chips |
+| Today | `A0E3D5BA-4C6F-4E8A-9B2D-7F1E3A5C8D0B` | Read/Notify/Write (encrypted) — JSON weather (Open-Meteo), next 36 h of events, today's reminders; notify = 1 byte "changed, re-read"; write `{"complete":"<reminder id>"}` |
+| Artwork | `A0E3D5BB-4C6F-4E8A-9B2D-7F1E3A5C8D0B` | Read/Write/Notify (encrypted) — write `{"t","a"}` to request (iPhone looks it up in the iTunes catalog, 200 px JPEG); notify 0x01 ready / 0x00 none; write 2-byte chunk index, read `[count hi, lo][≤480 bytes]`. Shown as Now Playing backdrop, MediaSession art and notification large icon |
+| Health | `A0E3D5B8-4C6F-4E8A-9B2D-7F1E3A5C8D0B` | Write (encrypted) — chunked health records: `[flags][payload]`, flags 0x01 first, 0x02 last |
+
+## Workouts & Apple Health
+
+- Watch: `health/WorkoutService` runs Health Services `ExerciseClient` (HR, calories, distance, steps, GPS) in a `health|location` foreground service with an Ongoing Activity chip. Workouts ≥ 60 s go to `HealthOutbox` (one JSON file per record in `filesDir/health_outbox`).
+- `PassiveHealthService` (opt-in, watch → Apple Health screen) receives all-day `HEART_RATE_BPM` and `STEPS_DAILY`; `StepDeltas` turns daily totals into interval samples.
+- `AncsService.syncHealth()` drains the outbox oldest-first whenever the companion service appears (and on `ACTION_SYNC_HEALTH`). A record is deleted only after the iPhone acks its last chunk.
+- iPhone: `PeripheralManager.handleHealthChunk` reassembles; `WatchHealthImporter.receive` writes the record to Application Support before acking, then imports into HealthKit (`HKWorkoutBuilder` + samples + pause events + `HKWorkoutRouteBuilder`). Locked iPhone (`errorDatabaseInaccessible`) → retried on `protectedDataDidBecomeAvailable`. Dedupe: workouts by `HKMetadataKeySyncIdentifier` query, samples by per-sample sync identifiers.
+- Passive also reads `CALORIES_DAILY`, `DISTANCE_DAILY`, `FLOORS_DAILY`; distance and floors go to Health as interval samples (`DailyDeltas`).
+- Workouts support goals (time / distance / calories, ring around the bezel), automatic km splits (haptic + banner) and user segments; iPhone writes splits as `.lap` and segments as `.segment` workout events.
+- No rings on the watch (removed in 1.8 at the user's request): passive `CALORIES_DAILY` deltas are split into Active Energy and Resting Energy using the resting rate `ActivityTracker` learns from quiet periods, and sent with steps, distance, floors and heart rate; the iPhone Fitness app draws its Move ring from that Active Energy. `WorkoutPeriods` trims passive samples to the time outside workouts (workouts write their own steps/kcal/distance/HR), including the workout in progress.
+- Tiles: `WorkoutTileService` (one-tap walk/run/cycle). Complications: iPhone battery (parsed from the companion status summary, refreshed every 15 min while connected).
+- Sleep: `PassiveListenerConfig.setShouldUserActivityInfoBeRequested(true)`; `SleepTracker` turns ASLEEP→other transitions (≥20 min) into sleep intervals and a resting heart rate (mean of the lowest 30% of readings during sleep) → `sleepAnalysis` / `restingHeartRate`.
+- Workouts also record `VO2_MAX`, `GROUND_CONTACT_TIME`, `VERTICAL_OSCILLATION`, `STRIDE_LENGTH` when supported → `vo2Max`, `runningGroundContactTime`, `runningVerticalOscillation`, `runningStrideLength`.
+- Today (`model/PhoneInfo`): Today screen, `TodayTileService`, `WeatherComplicationService`, `NextEventComplicationService`; refreshed on connect, on notify, every 15 min.
+- Breathe (watch, `ui/BreatheScreens.kt`): guided breathing (4 s in with light haptic taps, 6 s out); sessions ≥ 30 s go to the outbox as `mindful` intervals → `HKCategoryType(.mindfulSession)`.
+- Sideload awareness: the iPhone app parses `embedded.mobileprovision` (`SigningInfo`: expiry, HealthKit entitlement), shows it in Settings, schedules reminders a day and 2 h before expiry, and adds `"app":{"expires","health"}` to the Today JSON; the watch shows "iPhone app expires in …" on Home and the Apple Health state ("missing" = signature without HealthKit) on the Health screen.
+- Toggle key on iPhone is still `syncWorkouts` (Settings → Apple Health); when off, the first chunk is refused and the watch keeps the record.
+
+## Messages over Bluetooth Classic (MAP + PBAP)
+
+iOS supports MAP 1.4 (reply, compose, browse inbox) and PBAP for car kits. The watch acts as a MAP/PBAP client in userspace:
+
+- One-time Classic bond (`messages/ClassicPairing`): discovery while the iPhone's Bluetooth settings are open, `createBond()`; address saved in prefs `messaging/device`. The BLE (ANCS) bond is separate and unaffected.
+- `messages/ObexClient`: OBEX CONNECT / SETPATH / GET / PUT over `createRfcommSocketToServiceRecord` (MAS `0x1132`, PSE `0x112F`); targets MAS `bb582b40-…`, PBAP `796135f0-…`.
+- `messages/PhoneMessaging`: SETPATH root → telecom → msg; `GetMessagesListing` on inbox/sent (subject ≤255 chars); `PushMessage` to outbox with Charset=UTF-8 (iOS sends via Messages, iMessage or SMS); `GetMessage` for full text; PBAP pull `telecom/pb.vcf` (vCard 2.1, FN/N/TEL/EMAIL).
+- Contact photos: PBAP property selector includes PHOTO (bit 3); `Avatars` stores 128 px JPEGs indexed by name and address. Used for message/call notification icons (ANCS title = contact name, also for WhatsApp/Messenger), the call screen and Messages lists.
+- Replying to a Messages alert: the ANCS title (contact name) is matched against inbox `sender_name` to find the address; falls back to PBAP contacts. Missed-call alerts get a Message action too.
+- `messages/MapServerRecords` publishes MNS (`0x1133`, with a minimal OBEX server for event reports → refresh) and PCE (`0x112E`) RFCOMM service records like a car kit; iOS reads them at pairing time, so the watch must be (re-)paired after they exist. Setup re-pairs via hidden `removeBond` when possible. OBEX refusals show the response code.
+- iPhone side: user must enable **Show Notifications** (MAP) and **Sync Contacts** (PBAP) for the watch in Settings › Bluetooth › ⓘ.
+- Watch UI: Messages (conversations, thread bubbles, reply with quick replies or system dictation/keyboard/emoji via `RemoteInputIntentHelper`, compose to contacts), Setup screen.
+
 ## Quick Reply Flow
 
 1. Watch: user taps quick reply → ANCS negative action + BLE write to quick reply characteristic
 2. iPhone: `PeripheralManager` receives write → `QuickReplyLauncher` opens `shortcuts://run-shortcut?name=WearBridge%20Reply&input=text&text=…` (`&`, `=`, `+` percent-encoded)
 3. iOS only opens URLs from the foreground: with the app in the background (the usual case), the reply becomes a local notification and tapping it runs the shortcut
 4. User creates iOS Shortcut "WearBridge Reply" to send SMS/iMessage with the input text
-5. The reply list edited in the iOS app is not synced: the watch offers its built-in list (`IncomingCallActivity.QUICK_REPLIES`)
+5. The reply list edited in the iOS app is read on every connection (A0E3D5B9) and cached on the watch
+7. Chat apps (Messenger, WhatsApp, Zalo, Telegram…) get a Reply too: iOS offers accessories no text reply for them, so the reply becomes an iPhone draft with `app`; tapping its notification copies the text and opens the app (URL scheme)
+6. Message notifications from Messages get a "Reply" action with those replies as chips (plus voice/keyboard); the text is saved as a draft on the iPhone, which posts a "Reply to …" notification that opens the Messages composer
 
 ## iPhone Companion App Watch Detection
 

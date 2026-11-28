@@ -21,11 +21,14 @@ import com.wearos.ancsbridge.ble.AncsConstants
 import com.wearos.ancsbridge.ble.BleConnectionManager
 import com.wearos.ancsbridge.ble.BleScanner
 import com.wearos.ancsbridge.ble.BondStateReceiver
+import com.wearos.ancsbridge.ble.MediaCommand
+import com.wearos.ancsbridge.ble.NowPlaying
 import com.wearos.ancsbridge.model.AncsEvent
 import com.wearos.ancsbridge.model.AncsNotification
 import com.wearos.ancsbridge.model.ConnectionState
 import com.wearos.ancsbridge.ui.IncomingCallActivity
 import com.wearos.ancsbridge.ui.MainActivity
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -37,6 +40,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Foreground service that manages the BLE connection to iPhone and ANCS notification pipeline.
@@ -50,7 +54,7 @@ class AncsService : Service() {
     companion object {
         private const val TAG = "AncsService"
         private const val SERVICE_NOTIFICATION_ID = 1
-        private const val NOTIFICATION_ID_BASE = 1000
+        private const val MIRROR_TAG = "iPhone"
 
         const val ACTION_START = "com.wearos.ancsbridge.START"
         const val ACTION_STOP = "com.wearos.ancsbridge.STOP"
@@ -59,7 +63,25 @@ class AncsService : Service() {
         const val ACTION_RECONNECT = "com.wearos.ancsbridge.RECONNECT"
         const val ACTION_PERFORM_NOTIFICATION_ACTION = "com.wearos.ancsbridge.PERFORM_ACTION"
         const val ACTION_SEND_QUICK_REPLY = "com.wearos.ancsbridge.QUICK_REPLY"
+        const val ACTION_MEDIA_COMMAND = "com.wearos.ancsbridge.MEDIA_COMMAND"
+        const val EXTRA_MEDIA_COMMAND = "media_command"
+        const val ACTION_DRAFT = "com.wearos.ancsbridge.DRAFT"
         const val ACTION_CLEAR_ALL = "com.wearos.ancsbridge.CLEAR_ALL"
+        const val ACTION_SYNC_HEALTH = "com.wearos.ancsbridge.SYNC_HEALTH"
+        const val ACTION_COMPLETE_REMINDER = "com.wearos.ancsbridge.COMPLETE_REMINDER"
+        const val ACTION_REFRESH_INFO = "com.wearos.ancsbridge.REFRESH_INFO"
+
+        /** Chat apps whose alerts get a Reply (via the iPhone, see postNotification). */
+        private val CHAT_APPS = setOf(
+            "com.facebook.messenger", "net.whatsapp.whatsapp", "net.whatsapp.whatsappsmb",
+            "vn.com.vng.zingalo", "org.telegram.telegram", "ph.telegra.telegraph",
+            "org.whispersystems.signal", "com.burbn.instagram", "jp.naver.line",
+            "com.viber", "com.hammerandchisel.discord", "com.tinyspeck.chatlyio", "com.slack.slack",
+            "com.skype.skype", "com.microsoft.skype.teams", "com.kakao.talk", "com.tencent.xin",
+        )
+        /** Apple Health sync status for the UI: true while records are being sent. */
+        val healthSyncing = MutableStateFlow(false)
+        val healthAvailable = MutableStateFlow(false)
         const val EXTRA_DEVICE_ADDRESS = "device_address"
         const val EXTRA_ACTION_ID = "action_id"
         const val EXTRA_QUICK_REPLY_TEXT = "quick_reply_text"
@@ -69,11 +91,25 @@ class AncsService : Service() {
         /** Shared connection state observable by the ViewModel */
         private val _sharedConnectionState = MutableStateFlow<ConnectionState>(ConnectionState.Idle)
         val sharedConnectionState: StateFlow<ConnectionState> = _sharedConnectionState.asStateFlow()
+        private val _mediaAvailable = MutableStateFlow(false)
+        val mediaAvailable: StateFlow<Boolean> = _mediaAvailable.asStateFlow()
+        val supportedMediaCommands = MutableStateFlow<Set<Int>?>(null)
+        val phoneTools = MutableStateFlow(false)
+        val phoneSummary = MutableStateFlow("")
+        val sessionStats = MutableStateFlow(SessionStats())
+        private val _nowPlaying = MutableStateFlow(NowPlaying())
+        val nowPlaying: StateFlow<NowPlaying> = _nowPlaying.asStateFlow()
+        private val _artwork = MutableStateFlow<android.graphics.Bitmap?>(null)
+        /** Album artwork of the iPhone's current song, fetched by the iPhone app. */
+        val artwork: StateFlow<android.graphics.Bitmap?> = _artwork.asStateFlow()
     }
+
+    data class SessionStats(val received: Int = 0, val posted: Int = 0, val timeouts: Int = 0)
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private lateinit var connectionManager: BleConnectionManager
     private lateinit var scanner: BleScanner
+    private lateinit var notificationPreferences: NotificationPreferences
     private lateinit var notificationManager: NotificationManager
     private lateinit var vibrator: Vibrator
 
@@ -83,28 +119,42 @@ class AncsService : Service() {
     // Track active notification IDs in posting order (oldest first) for auto-cleanup
     private val activeNotificationIds = ArrayDeque<Int>()
 
-    // Vibration cooldown — don't vibrate more than once every 3 seconds
-
-    // Reconnection grace period — suppress vibration for notifications arriving
-    // in the first 60 seconds after subscribing (they're backlog, not truly new)
-    private var subscriptionTime = 0L
     private var activeCallUid: Long = -1
-    private val reconnectionGracePeriodMs = 60_000L
+    private var phoneRefreshJob: Job? = null
+    private var mediaSession: com.wearos.ancsbridge.media.PhoneMediaSession? = null
+
+    // UIDs that belong to the current ANCS session: only these may send actions to iOS.
+    // Alerts from an earlier session stay visible (like Apple Watch) but become read-only.
+    private val actionableUids = HashSet<Long>()
 
     // Serial queue for Control Point requests
-    private val attributeRequestQueue = Channel<AttributeRequest>(Channel.BUFFERED)
-    private var requestProcessorJob: Job? = null
+    private var sessionToken = java.util.UUID.randomUUID().toString()
+    private val pending = PendingAlerts()
+    private val wakeProcessor = Channel<Unit>(Channel.CONFLATED)
+    private var inFlight: AncsEvent? = null
+    private var attributeResponse: CompletableDeferred<Unit>? = null
 
-    private data class AttributeRequest(
-        val event: AncsEvent,
-        val requestedAttributes: List<Int>
-    )
+    private fun resetNotificationSession() {
+        sessionToken = java.util.UUID.randomUUID().toString()
+        sessionStats.value = SessionStats()
+        pending.clear()
+        inFlight = null
+        attributeResponse?.cancel()
+        dataSourceAssembler.reset()
+        actionableUids.clear()
+    }
 
     override fun onCreate() {
         super.onCreate()
         connectionManager = BleConnectionManager(this)
         scanner = BleScanner(this)
+        notificationPreferences = NotificationPreferences(this)
         notificationManager = getSystemService(NotificationManager::class.java)
+        // UIDs are scoped to the ANCS session. Remove stale buttons after process death
+        // and migrate untagged mirrored notifications from builds before 1.1.
+        notificationManager.activeNotifications.filter {
+            it.tag == MIRROR_TAG || (it.tag == null && it.id >= 1000)
+        }.forEach { notificationManager.cancel(it.tag, it.id) }
         vibrator = getSystemService(Vibrator::class.java)
 
         // Register bond state receiver
@@ -118,25 +168,74 @@ class AncsService : Service() {
 
         startForeground(SERVICE_NOTIFICATION_ID, buildServiceNotification("Starting..."))
 
-        // Listen for Notification Source events
-        scope.launch {
-            connectionManager.notificationSourceEvents.collect { data ->
-                handleNotificationSourceEvent(data)
-            }
-        }
-
-        // Listen for Data Source events
-        scope.launch {
-            connectionManager.dataSourceEvents.collect { data ->
-                handleDataSourceEvent(data)
-            }
-        }
+        connectionManager.onNotificationEvent = ::handleNotificationSourceEvent
+        connectionManager.onAttributeData = ::handleDataSourceEvent
+        connectionManager.onSessionReset = ::resetNotificationSession
 
         // Listen for companion app call state events (Live Call Status feature)
         scope.launch {
             connectionManager.callStateEvents.collect { data ->
                 handleCompanionCallState(data)
             }
+        }
+
+        scope.launch {
+            connectionManager.phoneTools.collect {
+                phoneTools.value = it
+                // The companion service was just found: deliver queued workouts/health data.
+                healthAvailable.value = it && connectionManager.canSyncHealth
+                if (it) syncHealth()
+                // Keep the iPhone battery complication fresh while the companion is reachable.
+                phoneRefreshJob?.cancel()
+                if (it) phoneRefreshJob = scope.launch {
+                    while (true) {
+                        connectionManager.refreshPhone()
+                        connectionManager.refreshInfo()
+                        kotlinx.coroutines.delay(15 * 60_000L)
+                    }
+                }
+            }
+        }
+        scope.launch {
+            connectionManager.phoneInfo.collect {
+                if (it.isNotBlank()) com.wearos.ancsbridge.model.PhoneInfo.save(this@AncsService, it)
+            }
+        }
+        scope.launch {
+            connectionManager.phoneSummary.collect {
+                phoneSummary.value = it
+                if (it.isNotBlank()) com.wearos.ancsbridge.tiles.PhoneBatteryComplicationService.save(this@AncsService, it)
+            }
+        }
+        scope.launch { connectionManager.supportedCommands.collect { supportedMediaCommands.value = it } }
+
+        scope.launch {
+            connectionManager.mediaAvailable.collect { _mediaAvailable.value = it }
+        }
+
+        // MAP/PBAP client records (MNS, PCE) so iOS offers Show Notifications / Sync Contacts.
+        com.wearos.ancsbridge.messages.MapServerRecords.onEvent = {
+            scope.launch { refreshMessagesSoon() }
+        }
+        com.wearos.ancsbridge.messages.MapServerRecords.start(this)
+
+        // iPhone playback → local MediaSession, so Wear OS shows media controls by itself.
+        mediaSession = com.wearos.ancsbridge.media.PhoneMediaSession(this) { command ->
+            scope.launch { connectionManager.sendMediaCommand(command.code.toByte()) }
+        }
+        scope.launch {
+            kotlinx.coroutines.flow.combine(
+                connectionManager.nowPlaying, connectionManager.mediaAvailable,
+                connectionManager.supportedCommands, connectionManager.artwork
+            ) { playing, available, commands, art -> listOf(playing, available, commands, art) }
+                .collect { values ->
+                    val playing = values[0] as com.wearos.ancsbridge.ble.NowPlaying
+                    @Suppress("UNCHECKED_CAST")
+                    mediaSession?.update(playing, values[1] as Boolean, values[2] as Set<Int>?,
+                        values[3] as android.graphics.Bitmap?)
+                    _nowPlaying.value = playing
+                    _artwork.value = values[3] as android.graphics.Bitmap?
+                }
         }
 
         // Update service notification and shared state based on connection state
@@ -150,10 +249,7 @@ class AncsService : Service() {
                     is ConnectionState.Scanning -> "Scanning..."
                     is ConnectionState.Connecting -> "Connecting to ${state.deviceName ?: "iPhone"}..."
                     is ConnectionState.Bonding -> "Pairing with ${state.deviceName ?: "iPhone"}..."
-                    is ConnectionState.Connected -> {
-                        subscriptionTime = System.currentTimeMillis()
-                        "Connected to ${state.deviceName ?: "iPhone"}"
-                    }
+                    is ConnectionState.Connected -> "Connected to ${state.deviceName ?: "iPhone"}"
                     is ConnectionState.Disconnected -> "Disconnected"
                     is ConnectionState.Error -> "Error: ${state.message}"
                 }
@@ -192,7 +288,8 @@ class AncsService : Service() {
                 connectionManager.disconnect()
             }
             ACTION_RECONNECT -> {
-                tryReconnectBonded()
+                // The app came to the foreground or the user tapped Reconnect: try right away.
+                tryReconnectBonded(fast = true)
             }
             ACTION_PERFORM_NOTIFICATION_ACTION -> {
                 val uid = intent.getLongExtra(NotificationActionReceiver.EXTRA_NOTIFICATION_UID, -1)
@@ -205,16 +302,102 @@ class AncsService : Service() {
                 val replyText = intent.getStringExtra(EXTRA_QUICK_REPLY_TEXT) ?: return START_STICKY
                 val callerName = intent.getStringExtra("caller_name") ?: "Unknown"
                 val payload = "$callerName|$replyText"
-                Log.i(TAG, "Sending quick reply via BLE: $payload")
-                connectionManager.writeQuickReply(payload)
+                Log.d(TAG, "Sending quick reply via BLE")
+                scope.launch {
+                    if (!connectionManager.writeQuickReply(payload)) {
+                        android.widget.Toast.makeText(this@AncsService,
+                            "Open WearBridge on iPhone to send replies", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+            ACTION_MEDIA_COMMAND -> {
+                val code = intent.getIntExtra(EXTRA_MEDIA_COMMAND, -1)
+                val command = MediaCommand.entries.firstOrNull { it.code == code }
+                if (command != null) {
+                    scope.launch {
+                        if (!connectionManager.sendMediaCommand(command.code.toByte())) {
+                            android.widget.Toast.makeText(
+                                this@AncsService, "Media control unavailable", android.widget.Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    }
+                }
+            }
+            "swiped_alert" -> {
+                val uid = intent.getLongExtra("uid", -1)
+                activeNotificationIds.remove(uid.toInt())
+                if (intent.getStringExtra("session") == sessionToken && actionableUids.remove(uid)) {
+                    val dismissAction = intent.getIntExtra("dismissAction", -1)
+                    if (notificationPreferences.syncDismissals && dismissAction in 0..1) {
+                        val bytes = ControlPointWriter.buildPerformNotificationAction(uid, dismissAction)
+                        scope.launch { connectionManager.writeAttributeRequest(bytes) }
+                    }
+                }
+            }
+            "phone_control" -> {
+                val code = intent.getIntExtra("code", -1)
+                scope.launch {
+                    val ok = if (code == 0) connectionManager.refreshPhone() else connectionManager.phoneCommand(code)
+                    if (!ok) android.widget.Toast.makeText(this@AncsService,
+                        "Unavailable. Check iPhone settings or try again.", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
+            ACTION_DRAFT -> {
+                val text = androidx.core.app.RemoteInput.getResultsFromIntent(intent)?.getCharSequence("body")?.toString()?.trim()
+                val uid = intent.getLongExtra("uid", -1)
+                val sender = intent.getStringExtra("sender").orEmpty()
+                val alertText = intent.getStringExtra("text").orEmpty()
+                val app = intent.getStringExtra("app").orEmpty()
+                val viaMap = app.isEmpty() || app.equals("com.apple.MobileSMS", true) || app.equals("com.apple.mobilephone", true)
+                if (!text.isNullOrEmpty() && viaMap && com.wearos.ancsbridge.messages.PhoneMessaging.isSetUp(this)) {
+                    // Send for real through the iPhone's Messages app (Bluetooth MAP).
+                    scope.launch {
+                        val sent = com.wearos.ancsbridge.messages.PhoneMessaging.replyToAlert(this@AncsService, sender, alertText, text)
+                        if (sent) {
+                            replyHaptic()
+                            android.widget.Toast.makeText(this@AncsService, "Sent", android.widget.Toast.LENGTH_SHORT).show()
+                            notificationManager.cancel(MIRROR_TAG, notificationIdForUid(uid))
+                        } else {
+                            val reason = (com.wearos.ancsbridge.messages.PhoneMessaging.status.value
+                                as? com.wearos.ancsbridge.messages.PhoneMessaging.Status.Error)?.message ?: "Not sent"
+                            android.widget.Toast.makeText(this@AncsService, reason, android.widget.Toast.LENGTH_LONG).show()
+                        }
+                    }
+                } else if (!text.isNullOrEmpty() && uid in actionableUids && intent.getStringExtra("session") == sessionToken) {
+                    val payload = org.json.JSONObject().put("id", java.util.UUID.randomUUID().toString())
+                        .put("sender", intent.getStringExtra("sender").orEmpty()).put("body", text)
+                        .apply { if (app.isNotEmpty()) put("app", app) }
+                        .toString().encodeToByteArray()
+                    scope.launch {
+                        val saved = connectionManager.saveDraft(payload)
+                        val message = when {
+                            !saved -> "Not delivered. Open WearBridge on iPhone and try again."
+                            viaMap -> "Saved on iPhone. Tap the notification there to send."
+                            else -> "On iPhone: tap the notification, then paste and send."
+                        }
+                        if (saved) replyHaptic()
+                        android.widget.Toast.makeText(this@AncsService, message, android.widget.Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+            ACTION_SYNC_HEALTH -> syncHealth()
+            ACTION_REFRESH_INFO -> scope.launch { connectionManager.refreshInfo() }
+            ACTION_COMPLETE_REMINDER -> {
+                val id = intent.getStringExtra("id")
+                if (id != null) scope.launch {
+                    if (connectionManager.completeReminder(id)) connectionManager.refreshInfo()
+                }
             }
             ACTION_CLEAR_ALL -> {
                 Log.i(TAG, "Clearing all notifications (${activeNotificationIds.size} tracked)")
                 activeNotificationIds.forEach { id ->
-                    notificationManager.cancel(id)
+                    notificationManager.cancel(MIRROR_TAG, id)
                 }
                 activeNotificationIds.clear()
-                notificationManager.cancel(NOTIFICATION_ID_CALL)
+                actionableUids.clear()
+                pending.clear()
+                inFlight = null
+                attributeResponse?.complete(Unit)
             }
             ACTION_STOP -> {
                 connectionManager.disconnect()
@@ -236,7 +419,12 @@ class AncsService : Service() {
             unregisterReceiver(bluetoothStateReceiver)
         } catch (_: IllegalArgumentException) { }
         connectionManager.destroy()
-        attributeRequestQueue.close()
+        mediaSession?.release()
+        com.wearos.ancsbridge.messages.MapServerRecords.stop()
+        _mediaAvailable.value = false
+        _nowPlaying.value = NowPlaying()
+        wakeProcessor.close()
+        _sharedConnectionState.value = ConnectionState.Idle
         scope.cancel()
     }
 
@@ -253,6 +441,7 @@ class AncsService : Service() {
                     connectionManager.onBluetoothOff()
                 }
                 BluetoothAdapter.STATE_ON -> {
+                    com.wearos.ancsbridge.messages.MapServerRecords.start(this@AncsService)
                     Log.i(TAG, "Bluetooth on: reconnecting")
                     connectionManager.onBluetoothOn()
                 }
@@ -271,11 +460,49 @@ class AncsService : Service() {
         })
     }
 
-    private fun tryReconnectBonded() {
+    private var messagesRefreshJob: Job? = null
+
+    /** Keeps the watch's Messages app current when a new message alert arrives. */
+    private fun refreshMessagesSoon() {
+        messagesRefreshJob?.cancel()
+        messagesRefreshJob = scope.launch {
+            kotlinx.coroutines.delay(3_000)
+            com.wearos.ancsbridge.messages.PhoneMessaging.refresh(this@AncsService)
+        }
+    }
+
+    private fun replyHaptic() {
+        runCatching { vibrator.vibrate(android.os.VibrationEffect.createPredefined(android.os.VibrationEffect.EFFECT_CLICK)) }
+    }
+
+    /** Drains the health outbox to the iPhone app, oldest first, one record at a time. */
+    private fun syncHealth() {
+        if (healthSyncing.value || !connectionManager.canSyncHealth) return
+        healthSyncing.value = true
+        scope.launch {
+            try {
+                val outbox = com.wearos.ancsbridge.health.HealthOutbox(this@AncsService)
+                while (true) {
+                    val file = outbox.oldest() ?: break
+                    val bytes = runCatching { file.readBytes() }.getOrNull()
+                    if (bytes == null || bytes.isEmpty()) { outbox.remove(file); continue }
+                    if (!connectionManager.sendHealthRecord(bytes)) {
+                        Log.w(TAG, "Health record not accepted by iPhone; will retry later")
+                        break
+                    }
+                    outbox.remove(file)
+                }
+            } finally {
+                healthSyncing.value = false
+            }
+        }
+    }
+
+    private fun tryReconnectBonded(fast: Boolean = false) {
         val device = connectionManager.getBondedIPhone()
         if (device != null) {
             Log.i(TAG, "Found bonded device: ${device.name ?: device.address}")
-            connectionManager.reconnect(device)
+            connectionManager.reconnect(device, fast)
         } else {
             Log.i(TAG, "No bonded iPhone found")
         }
@@ -289,19 +516,12 @@ class AncsService : Service() {
 
         Log.d(TAG, "NS event: id=${event.eventId} cat=${event.categoryId} uid=${event.notificationUid}")
 
+        sessionStats.value = sessionStats.value.copy(received = sessionStats.value.received + 1)
         when {
             event.isAdded || event.isModified -> {
-                // Skip pre-existing notifications at the NS level — don't even
-                // fetch attributes. This avoids GATT writes that trigger system haptics.
-                if (event.isPreExisting) {
+                // Ignore historical calls and honor the catch-up preference.
+                if (event.isPreExisting && (event.isIncomingCall || !notificationPreferences.catchUp)) {
                     Log.d(TAG, "Skipping pre-existing NS event uid=${event.notificationUid}")
-                    return
-                }
-
-                // Also skip during grace period (non-flagged backlog)
-                val now = System.currentTimeMillis()
-                if ((now - subscriptionTime) < reconnectionGracePeriodMs && !event.isIncomingCall) {
-                    Log.d(TAG, "Skipping NS event during grace period uid=${event.notificationUid}")
                     return
                 }
 
@@ -339,27 +559,20 @@ class AncsService : Service() {
                     ))
                 }
 
-                // Build list of attributes to request
-                val attrs = mutableListOf(
-                    AncsConstants.ATTR_APP_IDENTIFIER,
-                    AncsConstants.ATTR_TITLE,
-                    AncsConstants.ATTR_SUBTITLE,
-                    AncsConstants.ATTR_MESSAGE,
-                    AncsConstants.ATTR_DATE
-                )
-                if (event.hasPositiveAction) attrs.add(AncsConstants.ATTR_POSITIVE_ACTION_LABEL)
-                if (event.hasNegativeAction) attrs.add(AncsConstants.ATTR_NEGATIVE_ACTION_LABEL)
-
-                // Enqueue attribute fetch (for all notifications including calls)
-                scope.launch {
-                    attributeRequestQueue.send(AttributeRequest(event, attrs))
-                }
+                pending.offer(event)
+                wakeProcessor.trySend(Unit)
             }
             event.isRemoved -> {
+                pending.remove(event.notificationUid)
+                if (inFlight?.notificationUid == event.notificationUid) {
+                    inFlight = null
+                    attributeResponse?.complete(Unit)
+                }
                 // Cancel the Android notification and remove from tracking
                 val removedId = notificationIdForUid(event.notificationUid)
-                notificationManager.cancel(removedId)
+                notificationManager.cancel(MIRROR_TAG, removedId)
                 activeNotificationIds.remove(removedId)
+                actionableUids.remove(event.notificationUid)
 
                 // If this was the call on screen, dismiss everything (not for another
                 // call ending while a second one rings: call waiting).
@@ -415,30 +628,37 @@ class AncsService : Service() {
     }
 
     private fun handleDataSourceEvent(data: ByteArray) {
+        val event = inFlight ?: return
+        val response = attributeResponse ?: return
         val notification = dataSourceAssembler.onDataReceived(data)
         if (notification != null) {
-            Log.i(TAG, "Notification complete: ${notification.title} - ${notification.message}")
-            scope.launch {
-                postNotification(notification)
-            }
+            response.complete(Unit)
+            Log.d(TAG, "Notification attributes received for uid=${notification.uid}")
+            if (!pending.contains(event.notificationUid)) postNotification(notification)
         }
     }
 
     private fun startRequestProcessor() {
-        requestProcessorJob = scope.launch {
-            for (request in attributeRequestQueue) {
-                processAttributeRequest(request)
+        scope.launch {
+            for (signal in wakeProcessor) {
+                while (true) {
+                    val event = pending.next() ?: break
+                    processAttributeRequest(event)
+                }
             }
         }
     }
 
-    private suspend fun processAttributeRequest(request: AttributeRequest) {
-        val event = request.event
-
+    private suspend fun processAttributeRequest(event: AncsEvent) {
+        inFlight = event
+        val attrs = mutableListOf(AncsConstants.ATTR_APP_IDENTIFIER, AncsConstants.ATTR_TITLE,
+            AncsConstants.ATTR_SUBTITLE, AncsConstants.ATTR_MESSAGE, AncsConstants.ATTR_DATE)
+        if (event.hasPositiveAction) attrs.add(AncsConstants.ATTR_POSITIVE_ACTION_LABEL)
+        if (event.hasNegativeAction) attrs.add(AncsConstants.ATTR_NEGATIVE_ACTION_LABEL)
         // Prepare the assembler to expect this response
         dataSourceAssembler.expectNotificationAttributes(
             uid = event.notificationUid,
-            requestedAttributes = request.requestedAttributes,
+            requestedAttributes = attrs,
             category = event.categoryId,
             flags = event.eventFlags
         )
@@ -450,23 +670,33 @@ class AncsService : Service() {
             hasNegativeAction = event.hasNegativeAction
         )
 
-        val success = connectionManager.writeControlPoint(cpData)
-        if (!success) {
-            Log.e(TAG, "Failed to write Control Point for uid=${event.notificationUid}")
+        val response = CompletableDeferred<Unit>()
+        attributeResponse = response
+        try {
+            val accepted = connectionManager.writeAttributeRequest(cpData)
+            if (!accepted) {
+                Log.w(TAG, "Could not request attributes for uid=${event.notificationUid}")
+                return
+            }
+            // Finishing early avoids delaying a burst of messages. Timeout caps the
+            // wait if iOS removed the notification before answering.
+            if (withTimeoutOrNull(2_000) { response.join() } == null) {
+                sessionStats.value = sessionStats.value.copy(timeouts = sessionStats.value.timeouts + 1)
+                Log.w(TAG, "Attribute response timed out for uid=${event.notificationUid}")
+            }
+        } finally {
+            inFlight = null
+            if (attributeResponse === response) attributeResponse = null
             dataSourceAssembler.reset()
         }
-
-        // The response will come asynchronously via dataSourceEvents -> handleDataSourceEvent
-        // We add a small delay before processing the next request to allow the DS response to complete
-        kotlinx.coroutines.delay(500)
     }
 
-    private suspend fun postNotification(notification: AncsNotification) {
+    private fun postNotification(notification: AncsNotification) {
         val isPreExisting = notification.eventFlags and AncsConstants.EVENT_FLAG_PRE_EXISTING != 0
 
         Log.d(TAG, "postNotification: uid=${notification.uid} cat=${notification.categoryId} " +
             "flags=0x${notification.eventFlags.toString(16)} app=${notification.appIdentifier} " +
-            "title=${notification.title} preExisting=$isPreExisting")
+            "preExisting=$isPreExisting")
 
         // Resolve app display name if not cached
         val appName = resolveAppName(notification.appIdentifier)
@@ -489,23 +719,25 @@ class AncsService : Service() {
         )
 
         if (isIncomingCall) {
-            Log.i(TAG, "Showing incoming call screen for ${notification.title}")
+            if (isPreExisting) return
+            Log.i(TAG, "Showing incoming call screen")
             showIncomingCall(updatedNotification)
             return
         }
 
-        // Skip pre-existing notifications — they're already on the phone.
-        if (isPreExisting) {
-            Log.d(TAG, "Skipping pre-existing notification uid=${notification.uid}")
-            return
-        }
-
-        // Grace period and pre-existing checks are now done at the NS event level
-        // (handleNotificationSourceEvent) so we never even fetch attributes for those.
+        notificationPreferences.rememberApp(
+            notification.appIdentifier, appName ?: notification.appIdentifier
+        )
+        if (!notificationPreferences.isEnabled(notification.appIdentifier)) return
 
         // Route alarm/timer apps to the schedule channel regardless of ANCS category
         val alarmApps = setOf("com.apple.mobiletimer", "com.apple.reminders", "com.apple.mobilecal")
-        val channelId = if (notification.appIdentifier in alarmApps) {
+        val quiet = isPreExisting || notification.eventFlags and AncsConstants.EVENT_FLAG_SILENT != 0
+        val channelId = if (quiet) {
+            AncsApplication.CHANNEL_QUIET
+        } else if (notification.appIdentifier.equals("com.apple.MobileSMS", ignoreCase = true)) {
+            AncsApplication.CHANNEL_MESSAGES
+        } else if (notification.appIdentifier in alarmApps) {
             AncsApplication.CHANNEL_SCHEDULE
         } else {
             AncsApplication.channelForCategory(notification.categoryId)
@@ -521,12 +753,31 @@ class AncsService : Service() {
         )
 
         // Layout: contentTitle = sender, contentText = message preview, subText = app name
-        val senderName = notification.title.ifEmpty { notification.appDisplayName ?: notification.appIdentifier }
-        val messagePreview = notification.message.ifEmpty { notification.subtitle ?: "" }
+        val showPreviews = notificationPreferences.showPreviews
+        val senderName = if (showPreviews && notification.title.isNotEmpty()) {
+            notification.title
+        } else {
+            appName ?: "iPhone"
+        }
+        val messagePreview = if (showPreviews) {
+            notification.message.ifEmpty { notification.subtitle.orEmpty() }
+        } else {
+            "New notification"
+        }
         val notifTime = parseAncsDate(notification.date)
 
+        val badge = AppIconMapper.badge(this, notification.appIdentifier, notification.categoryId)
+        // The sender's photo from the iPhone's contacts, like Apple Watch shows it.
+        val avatar = if (notification.categoryId == AncsConstants.CATEGORY_SOCIAL ||
+            notification.categoryId == AncsConstants.CATEGORY_MISSED_CALL ||
+            notification.categoryId == AncsConstants.CATEGORY_VOICEMAIL ||
+            notification.categoryId == AncsConstants.CATEGORY_EMAIL ||
+            notification.categoryId == AncsConstants.CATEGORY_INCOMING_CALL
+        ) com.wearos.ancsbridge.messages.Avatars.forName(this, notification.title)?.let(com.wearos.ancsbridge.messages.Avatars::circle) else null
         val builder = NotificationCompat.Builder(this, channelId)
             .setSmallIcon(iconResId)
+            .setLargeIcon(avatar ?: badge)
+            .setColor(AppIconMapper.colorFor(notification.appIdentifier, notification.categoryId))
             .setContentTitle(senderName)
             .setContentText(messagePreview)
             .setSubText(appName ?: notification.appIdentifier)
@@ -535,6 +786,7 @@ class AncsService : Service() {
             .setShowWhen(true)
             .setAutoCancel(true)
             .setContentIntent(contentIntent)
+            .setOnlyAlertOnce(true)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(androidCategory(notification.categoryId))
             // Each notification gets a unique group key to prevent Android's auto-grouping.
@@ -544,31 +796,63 @@ class AncsService : Service() {
             .setGroupAlertBehavior(NotificationCompat.GROUP_ALERT_ALL)
             .setSound(android.provider.Settings.System.DEFAULT_NOTIFICATION_URI)
 
+        val delete = Intent(this, AncsService::class.java).setAction("swiped_alert")
+            .putExtra("uid", notification.uid)
+            .putExtra("session", sessionToken)
+            .putExtra("dismissAction", notification.dismissAction() ?: -1)
+        builder.setDeleteIntent(PendingIntent.getService(this, notifId, delete,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
+
         // MessagingStyle — Samsung One UI Watch renders this with message body
         // in the heads-up overlay, matching native Android-paired notification style.
         // BigTextStyle only shows body in expanded view, not the overlay.
         if (messagePreview.isNotEmpty()) {
             val person = androidx.core.app.Person.Builder()
                 .setName(senderName)
+                .setIcon(androidx.core.graphics.drawable.IconCompat.createWithBitmap(avatar ?: badge))
                 .build()
             builder.setStyle(
                 NotificationCompat.MessagingStyle(person)
                     .addMessage(messagePreview, notifTime, person)
             )
-        } else if (notification.message.isNotEmpty()) {
-            builder.setStyle(
-                NotificationCompat.BigTextStyle()
-                    .bigText(notification.message)
-                    .setBigContentTitle(senderName)
-                    .setSummaryText(appName)
-            )
+
+        }
+
+        val isMessages = notification.appIdentifier.equals("com.apple.MobileSMS", true)
+        val mapReady = com.wearos.ancsbridge.messages.PhoneMessaging.isSetUp(this)
+        if (isMessages && mapReady) refreshMessagesSoon()
+        // iOS gives accessories no text reply for third-party apps (ANCS has only two
+        // buttons). Messenger, WhatsApp, Zalo… replies go to the iPhone, which opens the app
+        // with the text on the clipboard after one tap.
+        val isChatApp = notification.appIdentifier.lowercase() in CHAT_APPS ||
+            (notification.categoryId == AncsConstants.CATEGORY_SOCIAL && !isMessages)
+        val canReply = (isMessages && (connectionManager.canDraft || mapReady)) ||
+            (notification.categoryId == AncsConstants.CATEGORY_MISSED_CALL && mapReady) ||
+            (isChatApp && connectionManager.canDraft)
+        if (showPreviews && canReply) {
+            val draftIntent = Intent(this, AncsService::class.java).apply {
+                action = ACTION_DRAFT
+                putExtra("uid", notification.uid)
+                putExtra("sender", notification.title)
+                putExtra("text", notification.message)
+                putExtra("app", notification.appIdentifier)
+                putExtra("session", sessionToken)
+            }
+            // Reply chips from the iPhone app's list, plus voice/keyboard, like Apple Watch.
+            val input = androidx.core.app.RemoteInput.Builder("body").setLabel("Reply")
+                .setChoices(com.wearos.ancsbridge.model.QuickReplies.load(this).toTypedArray())
+                .build()
+            val target = PendingIntent.getService(this, notifId, draftIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
+            builder.addAction(NotificationCompat.Action.Builder(R.drawable.ic_chat_reply, "Reply", target)
+                .addRemoteInput(input).build())
         }
 
         // Add action buttons if available
         if (notification.positiveActionLabel != null) {
             val positiveIntent = PendingIntent.getBroadcast(
                 this, notifId,
-                Intent(NotificationActionReceiver.ACTION_POSITIVE).apply {
+                Intent(this, NotificationActionReceiver::class.java).setAction(NotificationActionReceiver.ACTION_POSITIVE).apply {
                     setPackage(packageName)
                     putExtra(NotificationActionReceiver.EXTRA_NOTIFICATION_UID, notification.uid)
                 },
@@ -580,7 +864,7 @@ class AncsService : Service() {
         if (notification.negativeActionLabel != null) {
             val negativeIntent = PendingIntent.getBroadcast(
                 this, notifId + 500_000,
-                Intent(NotificationActionReceiver.ACTION_NEGATIVE).apply {
+                Intent(this, NotificationActionReceiver::class.java).setAction(NotificationActionReceiver.ACTION_NEGATIVE).apply {
                     setPackage(packageName)
                     putExtra(NotificationActionReceiver.EXTRA_NOTIFICATION_UID, notification.uid)
                 },
@@ -589,17 +873,17 @@ class AncsService : Service() {
             builder.addAction(R.drawable.ic_close, notification.negativeActionLabel, negativeIntent)
         }
 
-        // Never call setNotificationSilent() — it suppresses the heads-up overlay
-        // on Wear OS. Let the channel handle sound/vibration. We handle vibration
-        // manually via the Vibrator API with cooldown, so no double-buzz.
+        if (quiet) builder.setSilent(true)
 
         // Auto-cleanup: evict oldest notifications if approaching the system cap
-        evictOldestIfNeeded()
-
-        notificationManager.notify(notifId, builder.build())
-        // An update (MODIFIED) re-posts the same ID: keep one entry per notification.
+        // A MODIFIED event updates the same notification without evicting another.
         activeNotificationIds.remove(notifId)
-        activeNotificationIds.addLast(notifId)
+        if (isPreExisting && activeNotificationIds.size >= MAX_ACTIVE_NOTIFICATIONS) return
+        evictOldestIfNeeded()
+        notificationManager.notify(MIRROR_TAG, notifId, builder.build())
+        sessionStats.value = sessionStats.value.copy(posted = sessionStats.value.posted + 1)
+        if (isPreExisting) activeNotificationIds.addFirst(notifId) else activeNotificationIds.addLast(notifId)
+        actionableUids.add(notification.uid)
     }
 
     /**
@@ -609,7 +893,7 @@ class AncsService : Service() {
     private fun evictOldestIfNeeded() {
         while (activeNotificationIds.size >= MAX_ACTIVE_NOTIFICATIONS) {
             val oldId = activeNotificationIds.removeFirst()
-            notificationManager.cancel(oldId)
+            notificationManager.cancel(MIRROR_TAG, oldId)
             Log.d(TAG, "Auto-evicted oldest notification id=$oldId (${activeNotificationIds.size} active)")
         }
     }
@@ -629,7 +913,7 @@ class AncsService : Service() {
                     setPackage(packageName)
                     putExtra(IncomingCallActivity.EXTRA_CALLER_NAME, callerName)
                 })
-                Log.i(TAG, "Updated caller name to '$callerName' for uid=${notification.uid}")
+                Log.d(TAG, "Updated caller info for uid=${notification.uid}")
             }
             return
         }
@@ -654,7 +938,7 @@ class AncsService : Service() {
         }
         try {
             startActivity(callIntent)
-            Log.i(TAG, "Started IncomingCallActivity directly for '$callerName'")
+            Log.i(TAG, "Started incoming call activity")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start IncomingCallActivity: ${e.message}")
         }
@@ -669,8 +953,8 @@ class AncsService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         val declinePendingIntent = PendingIntent.getBroadcast(
-            this, 2,
-            Intent(NotificationActionReceiver.ACTION_NEGATIVE).apply {
+            this, notification.uid.toInt(),
+            Intent(this, NotificationActionReceiver::class.java).setAction(NotificationActionReceiver.ACTION_NEGATIVE).apply {
                 setPackage(packageName)
                 putExtra(NotificationActionReceiver.EXTRA_NOTIFICATION_UID, notification.uid)
             },
@@ -679,6 +963,11 @@ class AncsService : Service() {
         val caller = androidx.core.app.Person.Builder()
             .setName(callerName)
             .setImportant(true)
+            .apply {
+                com.wearos.ancsbridge.messages.Avatars.forName(this@AncsService, callerName)?.let {
+                    setIcon(androidx.core.graphics.drawable.IconCompat.createWithBitmap(com.wearos.ancsbridge.messages.Avatars.circle(it)))
+                }
+            }
             .build()
         val callNotification = NotificationCompat.Builder(this, AncsApplication.CHANNEL_INCOMING_CALL)
             .setSmallIcon(R.drawable.ic_phone)
@@ -695,19 +984,19 @@ class AncsService : Service() {
             )
             .build()
         notificationManager.notify(NOTIFICATION_ID_CALL, callNotification)
-        Log.i(TAG, "Posted CallStyle notification for '$callerName'")
+        Log.i(TAG, "Posted CallStyle notification")
     }
 
 
     private fun performNotificationAction(uid: Long, actionId: Int) {
+        if (uid !in actionableUids && uid != activeCallUid) return
         val data = ControlPointWriter.buildPerformNotificationAction(uid, actionId)
-        connectionManager.writeControlPoint(data)
-        // Cancel vibration (in case this is a call answer/decline)
-        vibrator.cancel()
-        // Cancel the Android notification and remove from tracking
-        val notifId = notificationIdForUid(uid)
-        notificationManager.cancel(notifId)
-        activeNotificationIds.remove(notifId)
+        scope.launch {
+            if (!connectionManager.writeAttributeRequest(data)) {
+                android.widget.Toast.makeText(this@AncsService, "iPhone unavailable", android.widget.Toast.LENGTH_SHORT).show()
+            }
+            // iOS will send MODIFIED or REMOVED if this action changes the alert.
+        }
     }
 
     private fun resolveAppName(appIdentifier: String): String? {
@@ -717,7 +1006,7 @@ class AncsService : Service() {
         // For now, derive a readable name from the bundle ID
         // A full implementation would use GetAppAttributes, but that requires
         // another CP/DS round trip. We use a simple mapping instead.
-        val name = knownAppNames[appIdentifier] ?: run {
+        val name = knownAppNamesLower[appIdentifier.lowercase()] ?: run {
             // Extract last component: "com.apple.MobileSMS" -> "MobileSMS"
             appIdentifier.substringAfterLast(".")
         }
@@ -762,7 +1051,7 @@ class AncsService : Service() {
     }
 
     private fun notificationIdForUid(uid: Long): Int =
-        (NOTIFICATION_ID_BASE + (uid % 500_000)).toInt()
+        uid.toInt()
 
     private fun buildServiceNotification(text: String): Notification {
         val intent = PendingIntent.getActivity(
@@ -780,7 +1069,10 @@ class AncsService : Service() {
             .build()
     }
 
+    private val knownAppNamesLower by lazy { knownAppNames.mapKeys { it.key.lowercase() } }
+
     private val knownAppNames = mapOf(
+        "vn.com.vng.zingalo" to "Zalo",
         // Apple Apps
         "com.apple.MobileSMS" to "Messages",
         "com.apple.mobilephone" to "Phone",

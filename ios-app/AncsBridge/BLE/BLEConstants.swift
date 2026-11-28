@@ -15,6 +15,17 @@ enum BLEConstants {
     /// Characteristic: call state (readable, notifiable — pushes call state to watch)
     static let callStateCharacteristicUUID = CBUUID(string: "A0E3D5B4-4C6F-4E8A-9B2D-7F1E3A5C8D0B")
 
+    /// Chunked health records from the watch: [flags][payload], flags 0x01 = first, 0x02 = last.
+    static let healthUUID = CBUUID(string: "A0E3D5B8-4C6F-4E8A-9B2D-7F1E3A5C8D0B")
+    /// JSON array of quick replies, read by the watch on connect.
+    static let repliesUUID = CBUUID(string: "A0E3D5B9-4C6F-4E8A-9B2D-7F1E3A5C8D0B")
+    /// Weather, calendar and reminders for the watch (read/notify, write to complete a reminder).
+    static let infoUUID = CBUUID(string: "A0E3D5BA-4C6F-4E8A-9B2D-7F1E3A5C8D0B")
+    /// Album artwork: write {"t","a"} to request, notify 0x01/0x00, write 2-byte chunk index then read.
+    static let artworkUUID = CBUUID(string: "A0E3D5BB-4C6F-4E8A-9B2D-7F1E3A5C8D0B")
+    static let toolsUUID = CBUUID(string: "A0E3D5B6-4C6F-4E8A-9B2D-7F1E3A5C8D0B")
+    static let draftUUID = CBUUID(string: "A0E3D5B5-4C6F-4E8A-9B2D-7F1E3A5C8D0B")
+
     /// Call state values sent over BLE
     static let callStateIdle: UInt8 = 0x00
     static let callStateRinging: UInt8 = 0x01

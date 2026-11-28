@@ -1,3 +1,6 @@
+import HealthKit
+import EventKit
+import UserNotifications
 import CoreBluetooth
 import Combine
 import UIKit
@@ -27,6 +30,15 @@ class PeripheralManager: NSObject, ObservableObject {
     private var companionService: CBMutableService?
     private var statusCharacteristic: CBMutableCharacteristic?
     private var callStateCharacteristic: CBMutableCharacteristic?
+    private var readSnapshots: [UUID: Data] = [:]
+    /// Health records being reassembled, per connected watch.
+    private var healthBuffers: [UUID: Data] = [:]
+    private var replySnapshots: [UUID: Data] = [:]
+    private var infoSnapshots: [UUID: Data] = [:]
+    private var infoCharacteristic: CBMutableCharacteristic?
+    private var artworkCharacteristic: CBMutableCharacteristic?
+    private var artworkChunk: [UUID: Int] = [:]
+    private var artworkSnapshots: [UUID: Data] = [:]
     private var serviceAdded = false
     private var scanTimer: Timer?
 
@@ -219,6 +231,15 @@ class PeripheralManager: NSObject, ObservableObject {
         logger.info("Started advertising as '\(BLEConstants.advertisingLocalName)'")
     }
 
+    /// While the app is on screen the iPhone is always discoverable, so the watch can find
+    /// it again after "Forget This Device" without hunting for Add New Watch.
+    var inForeground = false {
+        didSet {
+            if inForeground { startAdvertising() }
+            else if !settingsStore.autoAdvertise { stopAdvertising() }
+        }
+    }
+
     func stopAdvertising() {
         peripheralManager.stopAdvertising()
         isAdvertising = false
@@ -242,6 +263,23 @@ class PeripheralManager: NSObject, ObservableObject {
             permissions: [.writeable]
         )
 
+        UIDevice.current.isBatteryMonitoringEnabled = true
+        let replies = CBMutableCharacteristic(type: BLEConstants.repliesUUID, properties: [.read],
+            value: nil, permissions: [.readEncryptionRequired])
+        let info = CBMutableCharacteristic(type: BLEConstants.infoUUID, properties: [.read, .write, .notify],
+            value: nil, permissions: [.readEncryptionRequired, .writeEncryptionRequired])
+        infoCharacteristic = info
+        WatchInfoProvider.shared.onChange = { [weak self] in self?.notifyInfoChanged() }
+        let artwork = CBMutableCharacteristic(type: BLEConstants.artworkUUID, properties: [.read, .write, .notify],
+            value: nil, permissions: [.readEncryptionRequired, .writeEncryptionRequired])
+        artworkCharacteristic = artwork
+        ArtworkProvider.shared.onReady = { [weak self] found in self?.notifyArtwork(found) }
+        let health = CBMutableCharacteristic(type: BLEConstants.healthUUID, properties: [.write],
+            value: nil, permissions: [.writeEncryptionRequired])
+        let tools = CBMutableCharacteristic(type: BLEConstants.toolsUUID, properties: [.read, .write],
+                                            value: nil, permissions: [.readEncryptionRequired, .writeEncryptionRequired])
+        let draft = CBMutableCharacteristic(type: BLEConstants.draftUUID, properties: [.write],
+                                            value: nil, permissions: [.writeEncryptionRequired])
         callStateCharacteristic = CBMutableCharacteristic(
             type: BLEConstants.callStateCharacteristicUUID,
             properties: [.read, .notify],
@@ -253,7 +291,7 @@ class PeripheralManager: NSObject, ObservableObject {
             type: BLEConstants.companionServiceUUID,
             primary: true
         )
-        companionService?.characteristics = [statusCharacteristic!, quickReplyCharacteristic, callStateCharacteristic!]
+        companionService?.characteristics = [statusCharacteristic!, quickReplyCharacteristic, callStateCharacteristic!, draft, tools, health, replies, info, artwork]
 
         peripheralManager.add(companionService!)
         serviceAdded = true
@@ -271,7 +309,7 @@ extension PeripheralManager: CBPeripheralManagerDelegate {
         switch peripheral.state {
         case .poweredOn:
             setupServices()
-            if settingsStore.autoAdvertise {
+            if settingsStore.autoAdvertise || inForeground {
                 startAdvertising()
             }
         case .poweredOff:
@@ -299,8 +337,65 @@ extension PeripheralManager: CBPeripheralManagerDelegate {
         logger.info("Central unsubscribed: \(central.identifier)")
     }
 
+    private static func phoneSummary() -> Data {
+        let battery = UIDevice.current.batteryLevel
+        var lines = [battery < 0 ? "Battery unavailable" : "iPhone battery: \(Int((battery * 100).rounded()))%"]
+        if UserDefaults.standard.bool(forKey: "shareAgenda"),
+           EKEventStore.authorizationStatus(for: .event) == .fullAccess {
+            let store = EKEventStore()
+            let now = Date()
+            let end = now.addingTimeInterval(86400)
+            let predicate = store.predicateForEvents(withStart: now, end: end, calendars: nil)
+            let events = store.events(matching: predicate).sorted { $0.startDate < $1.startDate }
+            if events.isEmpty { lines.append("No events in the next 24 hours") }
+            for event in events.prefix(3) {
+                let time = event.isAllDay ? "All day" : event.startDate.formatted(date: .abbreviated, time: .shortened)
+                lines.append("\(time) · \(String((event.title ?? "Event").prefix(32)))")
+            }
+        }
+        var summary = lines.joined(separator: "\n")
+        while summary.utf8.count > 500 { summary.removeLast() }
+        return Data(summary.utf8)
+    }
+
     func peripheralManager(_ peripheral: CBPeripheralManager, didReceiveRead request: CBATTRequest) {
-        if request.characteristic.uuid == BLEConstants.connectionStatusUUID {
+        if request.characteristic.uuid == BLEConstants.toolsUUID {
+            let key = request.central.identifier
+            if request.offset == 0 { readSnapshots = [key: Self.phoneSummary()] }
+            guard let data = readSnapshots[key], request.offset <= data.count else {
+                peripheral.respond(to: request, withResult: .invalidOffset)
+                return
+            }
+            request.value = Data(data.dropFirst(request.offset))
+            peripheral.respond(to: request, withResult: .success)
+        } else if request.characteristic.uuid == BLEConstants.infoUUID {
+            let key = request.central.identifier
+            if request.offset == 0 { infoSnapshots[key] = WatchInfoProvider.shared.payload() }
+            guard let data = infoSnapshots[key], request.offset <= data.count else {
+                peripheral.respond(to: request, withResult: .invalidOffset)
+                return
+            }
+            request.value = Data(data.dropFirst(request.offset))
+            peripheral.respond(to: request, withResult: .success)
+        } else if request.characteristic.uuid == BLEConstants.artworkUUID {
+            let key = request.central.identifier
+            if request.offset == 0 { artworkSnapshots[key] = ArtworkProvider.shared.chunk(artworkChunk[key] ?? 0) }
+            guard let data = artworkSnapshots[key], request.offset <= data.count else {
+                peripheral.respond(to: request, withResult: .invalidOffset)
+                return
+            }
+            request.value = Data(data.dropFirst(request.offset))
+            peripheral.respond(to: request, withResult: .success)
+        } else if request.characteristic.uuid == BLEConstants.repliesUUID {
+            let key = request.central.identifier
+            if request.offset == 0 { replySnapshots[key] = QuickReplyStore.watchPayload() }
+            guard let data = replySnapshots[key], request.offset <= data.count else {
+                peripheral.respond(to: request, withResult: .invalidOffset)
+                return
+            }
+            request.value = Data(data.dropFirst(request.offset))
+            peripheral.respond(to: request, withResult: .success)
+        } else if request.characteristic.uuid == BLEConstants.connectionStatusUUID {
             request.value = Data([0x01])
             peripheral.respond(to: request, withResult: .success)
         } else if request.characteristic.uuid == BLEConstants.callStateCharacteristicUUID {
@@ -312,15 +407,145 @@ extension PeripheralManager: CBPeripheralManagerDelegate {
     }
 
     func peripheralManager(_ peripheral: CBPeripheralManager, didReceiveWrite requests: [CBATTRequest]) {
+        guard let first = requests.first else { return }
+        if first.characteristic.uuid == BLEConstants.infoUUID {
+            guard requests.count == 1, first.offset == 0, let data = first.value,
+                  let command = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let id = command["complete"] as? String else {
+                peripheral.respond(to: first, withResult: .invalidAttributeValueLength)
+                return
+            }
+            let done = WatchInfoProvider.shared.completeReminder(id: id)
+            peripheral.respond(to: first, withResult: done ? .success : .unlikelyError)
+            return
+        }
+        if first.characteristic.uuid == BLEConstants.artworkUUID {
+            guard requests.count == 1, first.offset == 0, let data = first.value else {
+                peripheral.respond(to: first, withResult: .invalidAttributeValueLength)
+                return
+            }
+            if data.count == 2 {
+                artworkChunk[first.central.identifier] = Int(data[data.startIndex]) << 8 | Int(data[data.startIndex + 1])
+            } else if let request = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let title = request["t"] as? String {
+                ArtworkProvider.shared.request(title: title, artist: request["a"] as? String ?? "")
+            } else {
+                peripheral.respond(to: first, withResult: .invalidAttributeValueLength)
+                return
+            }
+            peripheral.respond(to: first, withResult: .success)
+            return
+        }
+        if first.characteristic.uuid == BLEConstants.healthUUID {
+            handleHealthChunk(first, peripheral: peripheral, count: requests.count)
+            return
+        }
+        if first.characteristic.uuid == BLEConstants.toolsUUID {
+            guard requests.count == 1, first.offset == 0, let data = first.value, data.count == 1 else {
+                peripheral.respond(to: first, withResult: .invalidAttributeValueLength)
+                return
+            }
+            if data.first == 1, UserDefaults.standard.bool(forKey: "allowPing") {
+                let content = UNMutableNotificationContent()
+                content.title = "Ping from your Pixel Watch"
+                content.sound = .default
+                UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "watch-ping", content: content, trigger: nil)) { error in
+                    DispatchQueue.main.async { peripheral.respond(to: first, withResult: error == nil ? .success : .unlikelyError) }
+                }
+            } else if data.first == 2 {
+                DispatchQueue.main.async {
+                    guard UIApplication.shared.applicationState == .active, let camera = WatchCamera.active,
+                          camera.viewIfLoaded?.window != nil else {
+                        peripheral.respond(to: first, withResult: .requestNotSupported)
+                        return
+                    }
+                    WatchCamera.active = nil
+                    camera.takePicture()
+                    peripheral.respond(to: first, withResult: .success)
+                }
+            } else { peripheral.respond(to: first, withResult: .requestNotSupported) }
+            return
+        }
+        if first.characteristic.uuid == BLEConstants.draftUUID {
+            guard requests.count == 1, first.offset == 0, let bytes = first.value,
+                  bytes.count <= 512, let draft = try? JSONDecoder().decode(WatchDraft.self, from: bytes),
+                  !draft.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                peripheral.respond(to: first, withResult: .invalidAttributeValueLength)
+                return
+            }
+            let saved = DraftInbox.shared.save(draft)
+            peripheral.respond(to: first, withResult: saved ? .success : .unlikelyError)
+            if saved {
+                // One tap from the lock screen opens the composer with the reply filled in.
+                let content = UNMutableNotificationContent()
+                let place = draft.chatApp.map { " in \($0.name)" } ?? ""
+                content.title = draft.sender.isEmpty ? "Reply from your watch\(place)" : "Reply to \(draft.sender)\(place)"
+                content.body = draft.chatApp == nil ? draft.body : "\(draft.body)\nTap to copy, then paste and send."
+                content.sound = .default
+                content.userInfo = ["draftID": draft.id.uuidString]
+                UNUserNotificationCenter.current().add(UNNotificationRequest(
+                    identifier: "draft-\(draft.id.uuidString)", content: content, trigger: nil))
+            }
+            return
+        }
         for request in requests {
             if request.characteristic.uuid == BLEConstants.quickReplyCharacteristicUUID,
                let data = request.value,
                let payload = String(data: data, encoding: .utf8) {
-                logger.info("Quick reply received: \(payload)")
+                logger.info("Quick reply received")
                 handleQuickReply(payload)
             }
             peripheral.respond(to: request, withResult: .success)
         }
+    }
+
+    /// Reassembles a health record sent as acknowledged chunks; the last chunk is
+    /// acknowledged only once the record is stored, so the watch can then delete it.
+    private func handleHealthChunk(_ request: CBATTRequest, peripheral: CBPeripheralManager, count: Int) {
+        guard count == 1, request.offset == 0, let chunk = request.value, let flags = chunk.first else {
+            peripheral.respond(to: request, withResult: .invalidAttributeValueLength)
+            return
+        }
+        let key = request.central.identifier
+        if flags & 0x01 != 0 {
+            // Refuse early (before the whole record is sent) when Health sync is off.
+            guard WatchHealthImporter.isEnabled else {
+                healthBuffers[key] = nil
+                peripheral.respond(to: request, withResult: .requestNotSupported)
+                return
+            }
+            healthBuffers[key] = Data()
+        }
+        guard var buffer = healthBuffers[key] else {
+            peripheral.respond(to: request, withResult: .unlikelyError)
+            return
+        }
+        buffer.append(chunk.dropFirst())
+        guard buffer.count <= 512 * 1024 else {
+            healthBuffers[key] = nil
+            peripheral.respond(to: request, withResult: .insufficientResources)
+            return
+        }
+        if flags & 0x02 != 0 {
+            healthBuffers[key] = nil
+            let stored = WatchHealthImporter.shared.receive(buffer)
+            peripheral.respond(to: request, withResult: stored ? .success : .unlikelyError)
+        } else {
+            healthBuffers[key] = buffer
+            peripheral.respond(to: request, withResult: .success)
+        }
+    }
+
+    /// One byte tells a subscribed watch to re-read the info characteristic.
+    private func notifyInfoChanged() {
+        guard let info = infoCharacteristic else { return }
+        _ = peripheralManager.updateValue(Data([0x01]), for: info, onSubscribedCentrals: nil)
+    }
+
+    /// 0x01 = artwork ready to read in chunks, 0x00 = none found for this song.
+    private func notifyArtwork(_ found: Bool) {
+        guard let artwork = artworkCharacteristic else { return }
+        _ = peripheralManager.updateValue(Data([found ? 0x01 : 0x00]), for: artwork, onSubscribedCentrals: nil)
     }
 
     private func handleQuickReply(_ payload: String) {
@@ -332,7 +557,27 @@ extension PeripheralManager: CBPeripheralManagerDelegate {
     func peripheralManager(_ peripheral: CBPeripheralManager, willRestoreState dict: [String: Any]) {
         logger.info("Restoring peripheral manager state")
         if let services = dict[CBPeripheralManagerRestoredStateServicesKey] as? [CBMutableService] {
-            serviceAdded = !services.isEmpty
+            if let service = services.first(where: { $0.uuid == BLEConstants.companionServiceUUID }),
+               let characteristics = service.characteristics,
+               characteristics.contains(where: { $0.uuid == BLEConstants.healthUUID }),
+               characteristics.contains(where: { $0.uuid == BLEConstants.repliesUUID }),
+               characteristics.contains(where: { $0.uuid == BLEConstants.infoUUID }),
+               characteristics.contains(where: { $0.uuid == BLEConstants.toolsUUID }),
+               characteristics.contains(where: { $0.uuid == BLEConstants.draftUUID }),
+               characteristics.contains(where: { $0.uuid == BLEConstants.artworkUUID }) {
+                companionService = service
+                statusCharacteristic = characteristics.first { $0.uuid == BLEConstants.connectionStatusUUID } as? CBMutableCharacteristic
+                callStateCharacteristic = characteristics.first { $0.uuid == BLEConstants.callStateCharacteristicUUID } as? CBMutableCharacteristic
+                infoCharacteristic = characteristics.first { $0.uuid == BLEConstants.infoUUID } as? CBMutableCharacteristic
+                artworkCharacteristic = characteristics.first { $0.uuid == BLEConstants.artworkUUID } as? CBMutableCharacteristic
+                ArtworkProvider.shared.onReady = { [weak self] found in self?.notifyArtwork(found) }
+                WatchInfoProvider.shared.onChange = { [weak self] in self?.notifyInfoChanged() }
+                UIDevice.current.isBatteryMonitoringEnabled = true
+                serviceAdded = true
+            } else {
+                services.forEach { peripheral.remove($0) }
+                serviceAdded = false
+            }
         }
         if peripheral.isAdvertising {
             isAdvertising = true

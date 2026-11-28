@@ -65,13 +65,6 @@ class IncomingCallActivity : ComponentActivity() {
         /** After call is answered on iPhone, auto-dismiss after this many ms */
         private const val ACTIVE_CALL_DISMISS_MS = 5_000L
 
-        val QUICK_REPLIES = listOf(
-            "Can't talk right now.",
-            "Hey! Can't talk rn, what's up?",
-            "I'll call you back shortly.",
-            "In a meeting, will call later.",
-            "Driving right now, will call later."
-        )
     }
 
     private var notificationUid: Long = -1
@@ -145,7 +138,7 @@ class IncomingCallActivity : ComponentActivity() {
                 } else if (showReplies) {
                     QuickReplyScreen(
                         callerName = callerName,
-                        replies = QUICK_REPLIES,
+                        replies = com.wearos.ancsbridge.model.QuickReplies.load(this@IncomingCallActivity),
                         onReplySelected = { reply ->
                             declineWithMessage(reply)
                         },
@@ -235,12 +228,7 @@ fun IncomingCallScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Text(
-            text = appName,
-            fontSize = 12.sp,
-            color = Color.Gray,
-            textAlign = TextAlign.Center
-        )
+        ContactAvatar(name = callerName, size = 40.dp)
 
         Spacer(modifier = Modifier.height(4.dp))
 
@@ -255,7 +243,7 @@ fun IncomingCallScreen(
         Spacer(modifier = Modifier.height(4.dp))
 
         Text(
-            text = "Incoming Call",
+            text = "$appName · Incoming Call",
             fontSize = 12.sp,
             color = Color.Gray,
             textAlign = TextAlign.Center

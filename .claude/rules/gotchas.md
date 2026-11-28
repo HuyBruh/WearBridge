@@ -37,3 +37,39 @@
 18. **A Bluetooth restart leaves a dead `BluetoothGatt` with no callback**: Toggle, stack crash or OTA reboot kills every GATT client without `onConnectionStateChange`, so state stayed `Connecting` and `reconnect()` skipped as "already connecting". Listen to `ACTION_STATE_CHANGED`: reset on TURNING_OFF/OFF, reconnect on ON (falling back to the bonded iPhone, since a service started with Bluetooth off never set a target).
 
 19. **ANCS attribute tuples split anywhere across GATT packets**: The parser must not start a tuple until ID + 2-byte length are buffered. JVM unit tests need `unitTests.isReturnDefaultValues = true`, or `android.util.Log` throws and every parser test fails before asserting (this hid the bug).
+
+20. **One GATT operation at a time, or notifications vanish**: Android rejects a read/write/CCCD write while another is outstanding (`ERROR_GATT_WRITE_REQUEST_BUSY`). Firing the GAP name read, companion reads, AMS subscriptions and Control Point writes concurrently made attribute requests fail, and the alert was dropped. Every GATT operation goes through `BleConnectionManager.runOperation` (FIFO mutex, waits for the callback, 5 s timeout). Never call `gatt.read*/write*` directly.
+
+21. **ScalingLazyColumn renders empty in Paparazzi/previews**: layoutlib never runs its first layout pass. `ListScreen` lays items out in a plain `Column` when `LocalInspectionMode` is true; the screenshot tests provide it explicitly. Record with `./gradlew recordPaparazziDebug` (images in `app/src/test/snapshots`).
+
+22. **iOS hides ANCS per watch**: iPhone Settings › Bluetooth › ⓘ › "Share System Notifications" off = bonded but no ANCS service. After 3 discovery retries the watch shows that hint and keeps retrying with backoff.
+
+23. **HealthKit is unwritable while the iPhone is locked**: the companion app receives records in the background, so it must persist them before acking the watch and import later (`protectedDataDidBecomeAvailable`). Acking only after `HKHealthStore.save` would make the watch resend forever while the phone is in a pocket.
+
+24. **The Xcode project is committed, CI does not run xcodegen**: a new Swift file must also be added to `project.pbxproj` (build file, file reference, group, Sources phase), or CI builds without it.
+
+25. **MAP/PBAP need a Bluetooth Classic bond**: the ANCS bond is LE-only, so RFCOMM to the iPhone's MAS/PSE fails until the watch is also bonded over BR/EDR (Messages › Set Up). iOS only answers MAP/PBAP after "Show Notifications" / "Sync Contacts" are on for the watch; a refused OBEX CONNECT means one is off.
+
+26. **ANCS gives names, not numbers**: a reply needs the sender's address. It comes from the MAP inbox listing (`sender_addressing`) matched by `sender_name` = ANCS title, else from PBAP contacts.
+
+27. **Pixel Watch cannot be the iPhone's call headset**: HFP hands-free role and SCO audio are not available to apps (Merge only offers call audio on Galaxy Watch, whose firmware has it). Don't register an HFP record from the app: iOS would route calls to a "headset" that has no audio.
+
+28. **Health Services exposes no SpO2/HRV/sleep stages**: sleep comes only as the passive ASLEEP activity state (duration, no stages).
+
+29. **Never ship the debug APK to the watch**: debuggable Compose runs mostly interpreted and was visibly laggy (low FPS). Install `assembleRelease` (R8, baseline profiles, 4 MB vs 71 MB). Every build is signed with `app/sideload.keystore`; CI's per-run debug keys forced an uninstall (losing pairing) on every update.
+
+30. **Sideloaded iOS app lost HealthKit**: CI builds with `CODE_SIGNING_ALLOWED=NO`, so the binary carried no entitlements and Sideloadly/AltStore re-signed it without HealthKit ("This installation lacks HealthKit in its signature"). CI now ad-hoc signs the .app with `AncsBridge.entitlements` before zipping the IPA, and checks the entitlement is present.
+
+31. **iOS refused MAP with no toggle in Bluetooth settings**: iOS shows "Show Notifications"/"Sync Contacts" only for devices whose SDP lists MAP MNS / PBAP PCE, and reads SDP at pairing. `MapServerRecords` publishes both; re-pair after installing.
+
+32. **No text replies for third-party apps on iPhone**: ANCS exposes only positive/negative actions; no API lets an accessory or companion app answer Messenger/WhatsApp/Zalo. Only iMessage/SMS can be sent (MAP); others fall back to an iPhone draft (copy + open app).
+
+
+33. **"Forget This Device" on the iPhone leaves the watch with stale keys**: the watch still thinks it is bonded, so it reconnects and fails (disconnect status 5/6/0x3D) or finds no ANCS, and iOS never shows a pairing prompt. `BleConnectionManager.handlePairingLost` removes the stale bond (hidden `removeBond`) and pairs again; if that is blocked, it stops reconnecting and asks the user to remove the iPhone in the watch's Bluetooth settings. Pair iPhone › Forget iPhone does the same by hand. The iPhone app advertises whenever it is in the foreground so Search finds it.
+
+34. **vCard base64 lines can end with "="**: unfolding quoted-printable soft breaks (`=\r\n`) on the whole text glued a photo's padding to `END:VCARD`, losing the contact. Only QP properties are soft-unfolded now.
+
+35. **Workouts and all-day data overlap in Apple Health**: both came from WearBridge, so Health summed the workout's steps/kcal with the passive steps/kcal for the same minutes. Passive samples are trimmed to time outside workouts (`WorkoutPeriods`), including a workout still running.
+
+36. **Third-party replies need Apple's Notification Forwarding**: the AccessoryNotifications framework (iOS 26.5+) carries text replies for any app, but needs AccessorySetupKit pairing, three app extensions with Apple-managed entitlements (`accessory-data-provider`, `accessory-transport-security`, `accessory-transport-extension`) and is EU-only for customer installs. Not available to a sideloaded build; chat apps keep the iPhone draft fallback.
+

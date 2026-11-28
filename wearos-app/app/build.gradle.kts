@@ -3,6 +3,7 @@ plugins {
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("com.google.devtools.ksp")
+    id("app.cash.paparazzi")
 }
 
 android {
@@ -13,13 +14,32 @@ android {
         applicationId = "com.wearos.ancsbridge"
         minSdk = 33 // Wear OS 4
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 9
+        versionName = "1.9"
+    }
+
+    // One fixed key for every build (local and CI), so a new APK always installs over the
+    // previous one without uninstalling (which would wipe pairing and health data).
+    // It is a public sideloading key, not a store key.
+    signingConfigs {
+        create("sideload") {
+            storeFile = file("sideload.keystore")
+            storePassword = "android"
+            keyAlias = "wearbridge"
+            keyPassword = "android"
+        }
     }
 
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("sideload")
+        }
+        // The build to install: R8-optimised, not debuggable. Compose debug builds run
+        // several times slower on a watch.
         release {
             isMinifyEnabled = true
+            isShrinkResources = true
+            signingConfig = signingConfigs.getByName("sideload")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -62,6 +82,8 @@ dependencies {
 
     // Activity + Lifecycle
     implementation("androidx.activity:activity-compose:1.9.3")
+    // play-services-wearable pulls an old Fragment that breaks ActivityResult (lint fatal)
+    implementation("androidx.fragment:fragment-ktx:1.8.5")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("androidx.lifecycle:lifecycle-service:2.8.7")
@@ -70,6 +92,20 @@ dependencies {
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")
     ksp("androidx.room:room-compiler:2.6.1")
+
+    // Health Services (workouts, heart rate, passive steps) + ongoing activity chip
+    implementation("androidx.health:health-services-client:1.1.0")
+    implementation("androidx.wear:wear-ongoing:1.1.0")
+    implementation("androidx.wear:wear-input:1.2.0")
+    // MediaSession: iPhone playback appears in Wear OS media controls automatically
+    implementation("androidx.media:media:1.7.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-guava:1.9.0")
+
+    // Tiles & complications (Activity rings, Workout shortcuts, iPhone battery)
+    implementation("androidx.wear.tiles:tiles:1.4.1")
+    implementation("androidx.wear.protolayout:protolayout:1.2.1")
+    implementation("androidx.wear.protolayout:protolayout-expression:1.2.1")
+    implementation("androidx.wear.watchface:watchface-complications-data-source-ktx:1.2.1")
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")

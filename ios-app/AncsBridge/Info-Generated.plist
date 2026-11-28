@@ -17,11 +17,23 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0</string>
+	<string>1.1</string>
 	<key>CFBundleVersion</key>
-	<string>1</string>
+	<string>2</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Share the next three calendar events with your paired watch when you enable calendar sharing.</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>Save workouts, heart rate, steps and active energy recorded by your Pixel Watch.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Show the weather where you are on your watch.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>Show today's reminders on your watch and tick them off from there.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Use your paired watch as a shutter while the camera is open.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Save photos captured with the remote shutter.</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>WearBridge needs Bluetooth to connect to your Pixel Watch and forward notifications.</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>

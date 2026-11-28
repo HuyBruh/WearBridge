@@ -212,6 +212,25 @@ class DataSourceAssemblerTest {
         assertEquals(2L, notification!!.uid)
     }
 
+    @Test
+    fun `ignore late attributes from the previous request`() {
+        assembler.expectNotificationAttributes(
+            uid = 2,
+            requestedAttributes = listOf(AncsConstants.ATTR_APP_IDENTIFIER),
+            category = AncsConstants.CATEGORY_SOCIAL,
+            flags = 0
+        )
+
+        val lateResponse = buildResponse(0, 1, listOf(0 to "com.apple.mail"))
+        assertNull(assembler.onDataReceived(lateResponse))
+
+        val response = buildResponse(0, 2, listOf(0 to "com.apple.MobileSMS"))
+        val notification = assembler.onDataReceived(response)
+        assertNotNull(notification)
+        assertEquals(2L, notification!!.uid)
+        assertEquals("com.apple.MobileSMS", notification.appIdentifier)
+    }
+
     // Helper to build a raw ANCS Data Source response
     private fun buildResponse(
         commandId: Int,

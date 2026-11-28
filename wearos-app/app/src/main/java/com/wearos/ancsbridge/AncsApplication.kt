@@ -11,6 +11,7 @@ class AncsApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannels()
+        com.wearos.ancsbridge.model.PhoneInfo.onChanged = { com.wearos.ancsbridge.tiles.TileUpdates.today(it) }
     }
 
     private fun createNotificationChannels() {
@@ -33,6 +34,7 @@ class AncsApplication : Application() {
         // the app respects the user's watch-level vibration/sound settings and
         // gets proper heads-up/overlay display. No manual overrides.
         val channels = listOf(
+            NotificationChannel(CHANNEL_QUIET, "Silent & synced alerts", NotificationManager.IMPORTANCE_LOW),
             NotificationChannel(
                 CHANNEL_SERVICE,
                 "WearBridge Service",
@@ -102,6 +104,7 @@ class AncsApplication : Application() {
         private const val CHANNEL_VERSION = "v7"
         const val CHANNEL_SERVICE = "ancs_service_$CHANNEL_VERSION"
         const val CHANNEL_INCOMING_CALL = "ancs_incoming_call_$CHANNEL_VERSION"
+        const val CHANNEL_QUIET = "ancs_quiet"
         const val CHANNEL_MESSAGES = "ancs_messages_$CHANNEL_VERSION"
         const val CHANNEL_EMAIL = "ancs_email_$CHANNEL_VERSION"
         const val CHANNEL_SOCIAL = "ancs_social_$CHANNEL_VERSION"

@@ -3,6 +3,7 @@ import SwiftUI
 @main
 struct AncsBridgeApp: App {
     @StateObject private var bleViewModel = BLEViewModel()
+    @Environment(\.scenePhase) private var scenePhase
 
     init() {
         // Before any scene: a tap on a quick reply notification may be what launches the app.
@@ -13,7 +14,14 @@ struct AncsBridgeApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(bleViewModel)
-                .task { QuickReplyLauncher.shared.requestAuthorization() }
+                .task {
+                    QuickReplyLauncher.shared.requestAuthorization()
+                    await WatchHealthImporter.shared.requestNewTypesIfNeeded()
+                    SigningInfo.scheduleExpiryReminders()
+                }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            bleViewModel.peripheralManager.inForeground = phase == .active
         }
     }
 }

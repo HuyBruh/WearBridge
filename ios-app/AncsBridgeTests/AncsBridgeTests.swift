@@ -1,7 +1,43 @@
 import XCTest
+import HealthKit
 @testable import AncsBridge
 
 final class AncsBridgeTests: XCTestCase {
+
+    func testWatchDraftPreservesVietnameseAndPunctuation() throws {
+        let json = #"{"id":"12345678-1234-1234-1234-123456789012","sender":"Huy | Minh","body":"Đến rồi 👍"}"#
+        let draft = try JSONDecoder().decode(WatchDraft.self, from: Data(json.utf8))
+        XCTAssertEqual(draft.sender, "Huy | Minh")
+        XCTAssertEqual(draft.body, "Đến rồi 👍")
+    }
+
+    func testChatAppDraftsOpenTheRightApp() throws {
+        let json = #"{"id":"12345678-1234-1234-1234-123456789012","sender":"Minh","body":"Ok","app":"com.facebook.Messenger"}"#
+        let draft = try JSONDecoder().decode(WatchDraft.self, from: Data(json.utf8))
+        XCTAssertEqual(draft.chatApp?.name, "Messenger")
+        XCTAssertEqual(draft.chatApp?.url.scheme, "fb-messenger")
+        let sms = try JSONDecoder().decode(WatchDraft.self, from: Data(#"{"id":"12345678-1234-1234-1234-123456789012","sender":"A","body":"B"}"#.utf8))
+        XCTAssertNil(sms.chatApp)
+    }
+
+    func testWatchWorkoutActivitiesMapToHealthKit() {
+        XCTAssertEqual(WatchHealthImporter.activityType("running"), .running)
+        XCTAssertEqual(WatchHealthImporter.activityType("traditionalStrengthTraining"), .traditionalStrengthTraining)
+        XCTAssertEqual(WatchHealthImporter.activityType("unknown"), .other)
+        XCTAssertEqual(WatchHealthImporter.distanceType(.cycling), HKQuantityType(.distanceCycling))
+        XCTAssertNil(WatchHealthImporter.distanceType(.yoga))
+    }
+
+    func testWatchHealthRecordsAreRefusedWhileSyncIsOff() {
+        let previous = UserDefaults.standard.bool(forKey: WatchHealthImporter.enabledKey)
+        defer { UserDefaults.standard.set(previous, forKey: WatchHealthImporter.enabledKey) }
+        UserDefaults.standard.set(false, forKey: WatchHealthImporter.enabledKey)
+        let record = #"{"type":"workout","id":"abc","start":1000,"end":2000}"#
+        XCTAssertFalse(WatchHealthImporter.shared.receive(Data(record.utf8)))
+        UserDefaults.standard.set(true, forKey: WatchHealthImporter.enabledKey)
+        XCTAssertFalse(WatchHealthImporter.shared.receive(Data("not json".utf8)))
+        XCTAssertFalse(WatchHealthImporter.shared.receive(Data(#"{"type":"other","id":"x"}"#.utf8)))
+    }
 
     // MARK: - Quick reply URL
 
@@ -52,5 +88,29 @@ final class AncsBridgeTests: XCTestCase {
                        BLEConstants.callStateRinging)
         XCTAssertEqual(CallStateObserver.state(of: [outgoing, ended], previous: BLEConstants.callStateRinging),
                        BLEConstants.callStateEnded)
+    }
+
+    func testProvisioningProfileExpiryAndHealthKitAreRead() {
+        let xml = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0"><dict>
+        <key>ExpirationDate</key><date>2026-12-05T08:00:00Z</date>
+        <key>TeamName</key><string>Huy Pham</string>
+        <key>Entitlements</key><dict><key>com.apple.developer.healthkit</key><true/></dict>
+        </dict></plist>
+        """
+        var data = Data([0x30, 0x82, 0x01, 0x00, 0xFF])
+        data.append(Data(xml.utf8))
+        data.append(Data([0x00, 0xA0, 0x82]))
+        let profile = SigningInfo.parse(data)
+        XCTAssertEqual(profile?.expires, ISO8601DateFormatter().date(from: "2026-12-05T08:00:00Z"))
+        XCTAssertEqual(profile?.hasHealthKit, true)
+        XCTAssertEqual(profile?.teamName, "Huy Pham")
+    }
+
+    func testArtworkTitleCleanup() {
+        XCTAssertEqual(ArtworkProvider.clean("Song Name (feat. Someone) [Remastered 2011]"), "Song Name")
+        XCTAssertEqual(ArtworkProvider.clean("Anti-Hero - Live"), "Anti-Hero")
     }
 }

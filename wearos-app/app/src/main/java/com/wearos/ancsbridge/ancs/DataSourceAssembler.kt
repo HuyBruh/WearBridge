@@ -87,9 +87,7 @@ class DataSourceAssembler {
      */
     fun onDataReceived(data: ByteArray): AncsNotification? {
         if (state == State.IDLE) {
-            // Unexpected data — start fresh header parse
-            state = State.READING_HEADER
-            headerParsed = false
+            return null
         }
 
         buffer.write(data)
@@ -110,7 +108,10 @@ class DataSourceAssembler {
             when (commandId) {
                 AncsConstants.COMMAND_GET_NOTIFICATION_ATTRIBUTES -> {
                     if (bytes.size < 5) return null // Need at least CommandID + UID
-                    notificationUid = readUInt32LE(bytes, 1)
+                    if (readUInt32LE(bytes, 1) != notificationUid) {
+                        buffer.reset()
+                        return null
+                    }
                     offset = 5
                     headerParsed = true
                     state = State.READING_ATTRIBUTES
@@ -164,7 +165,6 @@ class DataSourceAssembler {
                 // Attribute complete
                 val value = currentAttrData.toString(Charsets.UTF_8.name())
                 attributes[currentAttrId] = value
-                Log.d(TAG, "Attribute $currentAttrId = \"$value\" (${currentAttrLength} bytes)")
 
                 currentAttrId = -1
                 currentAttrLength = -1

@@ -1,14 +1,129 @@
 import SwiftUI
+import HealthKit
+import EventKit
+import Photos
+import AVFoundation
 
 struct SettingsView: View {
     @EnvironmentObject var viewModel: BLEViewModel
     @State private var liveCallStatusEnabled: Bool = false
 
+    @AppStorage("allowPing") private var allowPing = false
+    @AppStorage("shareAgenda") private var shareAgenda = false
+    @AppStorage("shareWeather") private var shareWeather = false
+    @AppStorage("shareReminders") private var shareReminders = false
+    @AppStorage("syncWorkouts") private var syncWorkouts = false
+    @State private var cameraOpen = false
+    @State private var toolsMessage = ""
+    @State private var healthIssue: String?
+    @State private var requestingHealth = false
+    @ObservedObject private var healthImporter = WatchHealthImporter.shared
+
     var body: some View {
         NavigationStack {
             List {
-                // Features
+                Section("Health") {
+                    Button {
+                        Task { await updateHealth() }
+                    } label: {
+                        Label {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("Apple Health").foregroundStyle(.primary)
+                                Text(requestingHealth ? "Requesting access…" : (syncWorkouts ? "Saving workouts, steps, calories, heart rate, sleep & mindful minutes · tap to pause" : "Save workouts, steps, calories, heart rate, sleep & mindful minutes"))
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
+                            }
+                        } icon: {
+                            Image(systemName: "heart.fill").foregroundStyle(.pink)
+                        }
+                    }
+                    .disabled(requestingHealth)
+                    if syncWorkouts {
+                        LabeledContent("Workouts imported", value: "\(healthImporter.workoutsImported)")
+                        if healthImporter.pendingCount > 0 {
+                            LabeledContent("Waiting for Health", value: "\(healthImporter.pendingCount)")
+                        }
+                        if let last = healthImporter.lastImport {
+                            LabeledContent("Last import", value: last.formatted(.relative(presentation: .named)))
+                        }
+                        if let issue = healthImporter.lastIssue {
+                            Label(issue, systemImage: "exclamationmark.triangle")
+                                .font(.footnote)
+                                .foregroundStyle(.orange)
+                        }
+                    }
+                    if let profile = SigningInfo.profile, !profile.hasHealthKit, healthIssue == nil {
+                        Label("This installation's signature has no HealthKit, so Apple Health can't be used. Reinstall with Sideloadly or AltStore using your own Apple ID.",
+                              systemImage: "exclamationmark.triangle")
+                            .font(.footnote)
+                            .foregroundStyle(.orange)
+                    }
+                    if let healthIssue {
+                        Label(healthIssue, systemImage: "info.circle")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                if let expires = SigningInfo.expires {
+                    Section {
+                        LabeledContent("Signature expires", value: expires.formatted(date: .abbreviated, time: .shortened))
+                    } header: {
+                        Text("Installation")
+                    } footer: {
+                        Text(expires.timeIntervalSinceNow < 3 * 86400
+                             ? "Re-sign soon with Sideloadly (free Apple ID: every 7 days). You'll get a reminder a day before, and the watch shows it too. Watch data waits until then."
+                             : "You'll get a reminder a day before it expires; the watch shows it too.")
+                    }
+                }
                 Section {
+                    Toggle(isOn: $shareWeather) {
+                        Label("Weather", systemImage: "cloud.sun.fill")
+                    }
+                    .onChange(of: shareWeather) { on in
+                        if on { WatchInfoProvider.shared.requestLocation() }
+                    }
+                    Toggle(isOn: Binding(get: { shareReminders }, set: { on in
+                        if !on { shareReminders = false; return }
+                        Task { shareReminders = await WatchInfoProvider.shared.requestReminders() }
+                    })) {
+                        Label("Reminders", systemImage: "checklist")
+                    }
+                } header: {
+                    Text("On your watch")
+                } footer: {
+                    Text("Shown in Today on the watch, with a tile and complications. Calendar uses \"Share next 24 hours of calendar\" below.")
+                }
+                Section("iPhone controls") {
+                    Toggle(isOn: $allowPing) {
+                        Label("Ping iPhone", systemImage: "bell")
+                    }
+                    Button(shareAgenda ? "Stop sharing calendar" : "Share next 24 hours of calendar") {
+                        if shareAgenda { shareAgenda = false }
+                        else { Task {
+                            shareAgenda = (try? await EKEventStore().requestFullAccessToEvents()) == true
+                            if !shareAgenda { toolsMessage = "Calendar access is required to share your agenda." }
+                        } }
+                    }
+                    Button("Open remote camera") {
+                        Task {
+                            guard UIImagePickerController.isSourceTypeAvailable(.camera),
+                                  await AVCaptureDevice.requestAccess(for: .video),
+                                  await PHPhotoLibrary.requestAuthorization(for: .addOnly) == .authorized else {
+                                toolsMessage = "Allow Camera and Add Photos in Settings."
+                                return
+                            }
+                            cameraOpen = true
+                        }
+                    }
+                    if !toolsMessage.isEmpty { Text(toolsMessage) }
+                }
+                .fullScreenCover(isPresented: $cameraOpen) {
+                    WatchCamera { message in
+                        toolsMessage = message
+                        cameraOpen = false
+                    }.ignoresSafeArea()
+                }
+                Section("Calls") {
                     NavigationLink {
                         QuickReplySettingsView()
                     } label: {
@@ -65,9 +180,92 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("Settings")
+            .navigationBarTitleDisplayMode(.inline)
             .onAppear {
                 liveCallStatusEnabled = viewModel.peripheralManager.settingsStore.liveCallStatus
             }
+        }
+    }
+    @MainActor
+    private func updateHealth() async {
+        healthIssue = nil
+        guard HKHealthStore.isHealthDataAvailable() else {
+            healthIssue = "Apple Health is unavailable on this device."
+            return
+        }
+
+        let store = HKHealthStore()
+        let workout = HKObjectType.workoutType()
+        let types = WatchHealthImporter.shareTypes
+        let allAuthorized = types.allSatisfy { store.authorizationStatus(for: $0) == .sharingAuthorized }
+        if allAuthorized {
+            syncWorkouts.toggle()
+            if syncWorkouts { WatchHealthImporter.shared.importPending() }
+            return
+        }
+
+        syncWorkouts = false
+        requestingHealth = true
+        defer { requestingHealth = false }
+        do {
+            try await store.requestAuthorization(toShare: types, read: [])
+            syncWorkouts = store.authorizationStatus(for: workout) == .sharingAuthorized
+            if !syncWorkouts {
+                healthIssue = "In Apple Health, open your profile, find WearBridge under Apps and Services, and allow Workouts."
+            } else {
+                WatchHealthImporter.shared.importPending()
+            }
+        } catch {
+            let failure = error as NSError
+            if failure.localizedDescription.localizedCaseInsensitiveContains("entitlement") {
+                healthIssue = "This installation lacks HealthKit in its signature (common with purchased certificates). Reinstall with Sideloadly or AltStore using your own Apple ID, or a developer account with HealthKit enabled."
+            } else {
+                healthIssue = "\(failure.localizedDescription) (\(failure.domain) \(failure.code))"
+            }
+        }
+    }
+}
+
+
+struct WatchCamera: UIViewControllerRepresentable {
+    // Camera exists only while its visible iPhone sheet is open.
+    static weak var active: UIImagePickerController?
+    let finish: (String) -> Void
+    func makeCoordinator() -> Coordinator { Coordinator(finish) }
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = .camera
+        picker.showsCameraControls = false
+        let overlay = UIView(frame: picker.view.bounds)
+        overlay.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        let close = UIButton(type: .system)
+        close.configuration = .filled()
+        close.setTitle("Close camera", for: .normal)
+        close.addAction(UIAction { [weak picker] _ in
+            guard let picker else { return }
+            picker.delegate?.imagePickerControllerDidCancel?(picker)
+        }, for: .touchUpInside)
+        overlay.addSubview(close)
+        close.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            close.centerXAnchor.constraint(equalTo: overlay.centerXAnchor),
+            close.bottomAnchor.constraint(equalTo: overlay.safeAreaLayoutGuide.bottomAnchor, constant: -20)
+        ])
+        picker.cameraOverlayView = overlay
+        picker.delegate = context.coordinator
+        Self.active = picker
+        return picker
+    }
+    func updateUIViewController(_ controller: UIImagePickerController, context: Context) {}
+    final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+        let finish: (String) -> Void
+        init(_ finish: @escaping (String) -> Void) { self.finish = finish }
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) { finish("") }
+        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+            guard let image = info[.originalImage] as? UIImage else { finish("No photo captured."); return }
+            PHPhotoLibrary.shared().performChanges({
+                PHAssetChangeRequest.creationRequestForAsset(from: image)
+            }) { saved, _ in DispatchQueue.main.async { self.finish(saved ? "Photo saved." : "Could not save photo.") } }
         }
     }
 }
