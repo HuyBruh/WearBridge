@@ -371,7 +371,8 @@ internal fun HomeContent(
                 }
                 item {
                     NavButton(Icons.Rounded.Add, WearBridgeColors.Accent,
-                        if (hasBonded) "Pair another iPhone" else "Pair iPhone", null) { navigate(Routes.PAIR) }
+                        if (hasBonded) "Pair Again" else "Pair iPhone",
+                        if (hasBonded) "Fix or replace the pairing" else null) { navigate(Routes.PAIR) }
                 }
                 if (hasBonded) item {
                     NavButton(Icons.Rounded.Notifications, WearBridgeColors.Alert, "Notifications",
@@ -772,7 +773,8 @@ private fun PairScreen(viewModel: MainViewModel, onDone: () -> Unit) {
     val state by viewModel.connectionState.collectAsState()
     val isScanning by viewModel.isScanning.collectAsState()
     val scanStatus by viewModel.scanStatus.collectAsState()
-    val paired = remember { viewModel.pairedPhones() }
+    var paired by remember { mutableStateOf(viewModel.pairedPhones()) }
+    var forgetResult by remember { mutableStateOf<Boolean?>(null) }
 
     LaunchedEffect(state) { if (state is ConnectionState.Connected) onDone() }
 
@@ -821,6 +823,34 @@ private fun PairScreen(viewModel: MainViewModel, onDone: () -> Unit) {
                             }
                         }
                     }
+                }
+                // After "Forget This Device" on the iPhone, the watch's old keys block pairing.
+                item { ListHeader { Text("Trouble pairing?") } }
+                item {
+                    NavButton(Icons.Rounded.LinkOff, WearBridgeColors.Danger, "Forget iPhone",
+                        "Start over after forgetting on iPhone") {
+                        forgetResult = viewModel.forgetIPhone()
+                        paired = viewModel.pairedPhones()
+                    }
+                }
+                when (forgetResult) {
+                    true -> item {
+                        Text("Done. Now open Add New Watch in the iPhone app and tap Search.",
+                            style = MaterialTheme.typography.labelSmall, color = WearBridgeColors.Online,
+                            textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 12.dp))
+                    }
+                    false -> {
+                        item {
+                            Text("This watch won't let apps remove pairings. Remove your iPhone in Bluetooth settings, then come back and Search.",
+                                style = MaterialTheme.typography.labelSmall, color = WearBridgeColors.Alert,
+                                textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 12.dp))
+                        }
+                        item {
+                            Button(onClick = viewModel::openBluetoothSettings, modifier = Modifier.fillMaxWidth(),
+                                icon = { Icon(Icons.Rounded.Bluetooth, contentDescription = null) }) { Text("Bluetooth Settings") }
+                        }
+                    }
+                    null -> Unit
                 }
             }
         }

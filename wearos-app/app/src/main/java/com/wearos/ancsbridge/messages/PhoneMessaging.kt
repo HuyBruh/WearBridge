@@ -143,19 +143,35 @@ object PhoneMessaging {
         block: (ObexClient) -> T
     ): T = withContext(Dispatchers.IO) {
         lock.withLock {
-            val socket = open(context, uuid)
-            try {
-                val obex = ObexClient(socket.inputStream, socket.outputStream)
-                check(obex.connect(target)) {
-                    val code = ObexClient.describe(obex.lastConnectCode)
-                    if (uuid == MAS_UUID) "iPhone refused messages ($code). On iPhone: Bluetooth › ⓘ › Show Notifications. " +
-                        "Not there? Forget this watch on iPhone and run Set Up again."
-                    else "iPhone refused contacts ($code). On iPhone: Bluetooth › ⓘ › Sync Contacts."
+            // Like car kits, announce MAP features (MapSupportedFeatures, tag 0x29).
+            val features = if (uuid == MAS_UUID) AppParams().int(0x29, 0x0000007FL).build() else null
+            var attempt = 0
+            while (true) {
+                attempt++
+                val socket = open(context, uuid)
+                try {
+                    val obex = ObexClient(socket.inputStream, socket.outputStream)
+                    if (!obex.connect(target, features)) {
+                        // iOS may refuse while it asks on the iPhone screen, or just after
+                        // Show Notifications was turned on: try once more on a new link.
+                        if (attempt == 1 && obex.lastConnectCode == 0xC3) {
+                            runCatching { socket.close() }
+                            Thread.sleep(2_000)
+                            continue
+                        }
+                        val code = ObexClient.describe(obex.lastConnectCode)
+                        error(
+                            if (uuid == MAS_UUID) "iPhone refused messages ($code). Unlock the iPhone and check Bluetooth › ⓘ › Show Notifications " +
+                                "(not Share System Notifications), then Refresh. Still refused? Messages › Set Up again."
+                            else "iPhone refused contacts ($code). On iPhone: Bluetooth › ⓘ › Sync Contacts."
+                        )
+                    }
+                    return@withLock try { block(obex) } finally { obex.disconnect() }
+                } finally {
+                    runCatching { socket.close() }
                 }
-                try { block(obex) } finally { obex.disconnect() }
-            } finally {
-                runCatching { socket.close() }
             }
+            @Suppress("UNREACHABLE_CODE") error("unreachable")
         }
     }
 

@@ -90,6 +90,22 @@ class BleConnectionManager(private val context: Context) {
             return adapter?.bondedDevices?.firstOrNull { it.address == address }
         }
 
+        /** Disconnect reasons that mean the iPhone no longer has our pairing keys. */
+        private val PAIRING_LOST = setOf(0x05, 0x06, 0x3D)
+
+        /**
+         * Removes a bond. removeBond() is hidden API: it works on many builds, but newer
+         * Android may block it, in which case the user removes the device in Settings.
+         */
+        fun removeBond(device: BluetoothDevice): Boolean =
+            runCatching { device.javaClass.getMethod("removeBond").invoke(device) as Boolean }
+                .onFailure { Log.w(TAG, "removeBond blocked", it) }
+                .getOrDefault(false)
+
+        fun clearSavedIPhone(context: Context) {
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().remove(KEY_PAIRED_IPHONE).apply()
+        }
+
         fun looksLikeIPhone(name: String): Boolean = listOf(
             "iPhone", "AncsBrid", "AppleToWe", "WearBrid"
         ).any { name.contains(it, ignoreCase = true) }
@@ -130,6 +146,32 @@ class BleConnectionManager(private val context: Context) {
     /** The user chose Disconnect: Bluetooth coming back on must not reconnect. */
     private var userDisconnected = false
     private var serviceDiscoveryRetries = 0
+    private var repairAttempted = false
+    /** True when the iPhone forgot this watch and the stale bond could not be removed. */
+    val pairingLost = MutableStateFlow(false)
+
+    /** The iPhone forgot us: remove the stale bond and pair again, or ask the user to. */
+    private fun handlePairingLost(device: BluetoothDevice) {
+        Log.w(TAG, "iPhone no longer has our pairing keys")
+        reconnectJob?.cancel()
+        if (removeBond(device)) {
+            _connectionState.value = ConnectionState.Bonding(displayName(device))
+            scope.launch {
+                // Wait for the bond to clear, then connect: discovery will call createBond().
+                repeat(20) {
+                    if (device.bondState == BluetoothDevice.BOND_NONE) return@repeat
+                    delay(250)
+                }
+                connect(device)
+            }
+        } else {
+            autoReconnect = false
+            pairingLost.value = true
+            _connectionState.value = ConnectionState.Error(
+                "iPhone forgot this watch. Remove the iPhone in watch Settings › Connectivity › Bluetooth, then pair again."
+            )
+        }
+    }
     private var mtuBytes = 23
     private var cachedDeviceName: String? = null
 
@@ -260,6 +302,10 @@ class BleConnectionManager(private val context: Context) {
             endSession()
             session.close()
             gatt = null
+            if (status in PAIRING_LOST && session.device.bondState == BluetoothDevice.BOND_BONDED) {
+                handlePairingLost(session.device)
+                return@GattCallback
+            }
             // Keep an actionable error (e.g. "turn on Share System Notifications") on screen.
             if (_connectionState.value !is ConnectionState.Error) {
                 _connectionState.value = ConnectionState.Disconnected()
@@ -318,6 +364,12 @@ class BleConnectionManager(private val context: Context) {
                     delay(2_000)
                     if (gatt === session && !session.discoverServices()) session.disconnect()
                 }
+            } else if (!repairAttempted) {
+                // Most often the iPhone forgot this watch while the watch kept its keys:
+                // drop our stale bond and pair again (iOS then asks to pair).
+                repairAttempted = true
+                session.disconnect()
+                handlePairingLost(session.device)
             } else {
                 _connectionState.value = ConnectionState.Error(
                     "On iPhone: Settings › Bluetooth › ⓘ next to this watch › turn on Share System Notifications"
@@ -359,6 +411,8 @@ class BleConnectionManager(private val context: Context) {
             return
         }
         Log.i(TAG, "ANCS session active")
+        repairAttempted = false
+        pairingLost.value = false
         reconnectDelay = INITIAL_RECONNECT_DELAY_MS
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit().putString(KEY_PAIRED_IPHONE, session.device.address).apply()

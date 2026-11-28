@@ -119,11 +119,6 @@ struct AddWatchView: View {
                     viewModel.toggleAdvertising()
                 }
             }
-            .onDisappear {
-                if viewModel.peripheralManager.isAdvertising {
-                    viewModel.toggleAdvertising()
-                }
-            }
         }
     }
 

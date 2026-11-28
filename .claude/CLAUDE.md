@@ -44,7 +44,7 @@ adb logcat --pid=$(adb shell pidof com.wearos.ancsbridge)
 ## Rules
 
 - [BLE & ANCS Protocol](/.claude/rules/ble-ancs-protocol.md) — connection flow, Telecom calls, channels, icon mapping
-- [Gotchas & Past Bugs](/.claude/rules/gotchas.md) — 32 documented footguns
+- [Gotchas & Past Bugs](/.claude/rules/gotchas.md) — 33 documented footguns
 - [Future Work](/.claude/rules/future-work.md) — full-color icons, multi-device, health data
 
 ## Verification

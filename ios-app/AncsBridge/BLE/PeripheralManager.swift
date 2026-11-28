@@ -228,6 +228,15 @@ class PeripheralManager: NSObject, ObservableObject {
         logger.info("Started advertising as '\(BLEConstants.advertisingLocalName)'")
     }
 
+    /// While the app is on screen the iPhone is always discoverable, so the watch can find
+    /// it again after "Forget This Device" without hunting for Add New Watch.
+    var inForeground = false {
+        didSet {
+            if inForeground { startAdvertising() }
+            else if !settingsStore.autoAdvertise { stopAdvertising() }
+        }
+    }
+
     func stopAdvertising() {
         peripheralManager.stopAdvertising()
         isAdvertising = false
@@ -293,7 +302,7 @@ extension PeripheralManager: CBPeripheralManagerDelegate {
         switch peripheral.state {
         case .poweredOn:
             setupServices()
-            if settingsStore.autoAdvertise {
+            if settingsStore.autoAdvertise || inForeground {
                 startAdvertising()
             }
         case .poweredOff:

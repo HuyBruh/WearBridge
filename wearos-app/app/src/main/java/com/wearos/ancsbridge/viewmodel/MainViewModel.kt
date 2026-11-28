@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.first
 
 @SuppressLint("MissingPermission")
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -146,34 +147,57 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun scanAndConnect() {
         if (_isScanning.value) return
         _isScanning.value = true
-        _scanStatus.value = "Looking for WearBridge app..."
+        _scanStatus.value = "Looking for your iPhone…"
         discoveredAppleDevices.clear()
 
         scanJob = viewModelScope.launch {
-            // Phase 1: Scan for companion app (10 seconds)
-            var found = false
-            launch {
-                delay(10_000)
-                if (_isScanning.value && !found) {
-                    _scanStatus.value = "WearBridge app not found.\nOpen it on your iPhone."
-                    stopScan()
-                }
-            }
-
-            try {
-                scanner.scanForCompanion().collect { result ->
-                    found = true
-                    val name = result.device.name ?: result.device.address
-                    Log.i("MainViewModel", "Found companion: $name rssi=${result.rssi}")
-                    _scanStatus.value = "Found iPhone! Connecting..."
-                    stopScan()
-                    connectToDevice(result.device.address)
-                    return@collect
-                }
+            val result = try {
+                // The iPhone app advertises while it is open (Add New Watch).
+                kotlinx.coroutines.withTimeoutOrNull(20_000) { scanner.scanForCompanion().first() }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
-                _scanStatus.value = "Scan error: ${e.message}"
+                _scanStatus.value = "Bluetooth scan failed. Turn Bluetooth off and on, then try again."
                 _isScanning.value = false
+                return@launch
             }
+            _isScanning.value = false
+            if (result == null) {
+                _scanStatus.value = "iPhone not found. On iPhone open WearBridge › Add New Watch, keep it on screen, then Search again."
+                return@launch
+            }
+            Log.i("MainViewModel", "Found companion: ${result.device.address} rssi=${result.rssi}")
+            _scanStatus.value = "Found iPhone. Connecting…"
+            connectToDevice(result.device.address)
+        }
+    }
+
+    /**
+     * Removes this watch's pairings with the iPhone (notifications and Messages) so it can
+     * pair again from scratch. Returns false if Android blocks removing bonds; the user then
+     * removes the iPhone in the watch's Bluetooth settings.
+     */
+    fun forgetIPhone(): Boolean {
+        val context = getApplication<Application>()
+        disconnect()
+        val devices = listOfNotNull(
+            BleConnectionManager.savedIPhone(context),
+            com.wearos.ancsbridge.messages.PhoneMessaging.device(context),
+        ) + pairedPhones().mapNotNull { (_, address) ->
+            context.getSystemService(BluetoothManager::class.java).adapter?.bondedDevices?.firstOrNull { it.address == address }
+        }
+        var removedAll = true
+        devices.distinctBy { it.address }.forEach { if (!BleConnectionManager.removeBond(it)) removedAll = false }
+        BleConnectionManager.clearSavedIPhone(context)
+        com.wearos.ancsbridge.messages.PhoneMessaging.forget(context)
+        return removedAll
+    }
+
+    fun openBluetoothSettings() {
+        val context = getApplication<Application>()
+        runCatching {
+            context.startActivity(Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         }
     }
 

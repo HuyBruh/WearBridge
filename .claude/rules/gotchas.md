@@ -64,3 +64,5 @@
 
 32. **No text replies for third-party apps on iPhone**: ANCS exposes only positive/negative actions; no API lets an accessory or companion app answer Messenger/WhatsApp/Zalo. Only iMessage/SMS can be sent (MAP); others fall back to an iPhone draft (copy + open app).
 
+
+33. **"Forget This Device" on the iPhone leaves the watch with stale keys**: the watch still thinks it is bonded, so it reconnects and fails (disconnect status 5/6/0x3D) or finds no ANCS, and iOS never shows a pairing prompt. `BleConnectionManager.handlePairingLost` removes the stale bond (hidden `removeBond`) and pairs again; if that is blocked, it stops reconnecting and asks the user to remove the iPhone in the watch's Bluetooth settings. Pair iPhone › Forget iPhone does the same by hand. The iPhone app advertises whenever it is in the foreground so Search finds it.

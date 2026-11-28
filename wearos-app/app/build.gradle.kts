@@ -14,8 +14,8 @@ android {
         applicationId = "com.wearos.ancsbridge"
         minSdk = 33 // Wear OS 4
         targetSdk = 35
-        versionCode = 6
-        versionName = "1.5"
+        versionCode = 7
+        versionName = "1.7"
     }
 
     // One fixed key for every build (local and CI), so a new APK always installs over the

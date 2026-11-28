@@ -95,8 +95,9 @@ class ObexClient(private val input: InputStream, private val output: OutputStrea
         connectionId?.let { listOf(Header(HI_CONNECTION_ID, it)) } ?: emptyList()
 
     /** Sends CONNECT to [target] (service UUID bytes). */
-    fun connect(target: ByteArray): Boolean {
-        val headers = Header(HI_TARGET, target).encode()
+    fun connect(target: ByteArray, appParams: ByteArray? = null): Boolean {
+        val headers = Header(HI_TARGET, target).encode() +
+            (appParams?.let { Header(HI_APP_PARAMS, it).encode() } ?: ByteArray(0))
         val length = 7 + headers.size
         val packet = byteArrayOf(
             OP_CONNECT.toByte(), (length shr 8).toByte(), length.toByte(),
