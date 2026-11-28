@@ -11,6 +11,7 @@ class AncsApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannels()
+        com.wearos.ancsbridge.health.ActivityTracker.onChanged = { com.wearos.ancsbridge.tiles.TileUpdates.activity(it) }
     }
 
     private fun createNotificationChannels() {

@@ -28,6 +28,7 @@ import androidx.health.services.client.data.ExerciseState
 import androidx.health.services.client.data.ExerciseTrackedStatus
 import androidx.health.services.client.data.ExerciseUpdate
 import androidx.health.services.client.endExercise
+import androidx.health.services.client.markLap
 import androidx.health.services.client.getCapabilities
 import androidx.health.services.client.getCurrentExerciseInfo
 import androidx.health.services.client.pauseExercise
@@ -63,6 +64,12 @@ sealed interface WorkoutState {
         val distanceM: Double,
         val speedMps: Double?,
         val gpsReady: Boolean,
+        val goal: WorkoutGoal = WorkoutGoal.OPEN,
+        val goalReached: Boolean = false,
+        /** Most recent km split (km number, active ms it took), shown briefly. */
+        val lastSplit: Pair<Int, Long>? = null,
+        val lastSplitAtMs: Long = 0,
+        val segmentCount: Int = 0,
     ) : WorkoutState {
         fun activeMs(now: Long = System.currentTimeMillis()): Long =
             if (paused) activeMsAtCheckpoint else activeMsAtCheckpoint + (now - checkpointMs).coerceAtLeast(0)
@@ -86,6 +93,9 @@ class WorkoutService : Service() {
         private const val ACTION_PAUSE = "com.wearos.ancsbridge.workout.PAUSE"
         private const val ACTION_RESUME = "com.wearos.ancsbridge.workout.RESUME"
         private const val ACTION_END = "com.wearos.ancsbridge.workout.END"
+        private const val ACTION_SEGMENT = "com.wearos.ancsbridge.workout.SEGMENT"
+        private const val EXTRA_GOAL_TYPE = "goal_type"
+        private const val EXTRA_GOAL_TARGET = "goal_target"
         private const val EXTRA_KIND = "kind"
         private const val PREFS = "workout_session"
         private const val HR_INTERVAL_MS = 5_000L
@@ -94,13 +104,16 @@ class WorkoutService : Service() {
         private val _state = MutableStateFlow<WorkoutState>(WorkoutState.Idle)
         val state: StateFlow<WorkoutState> = _state.asStateFlow()
 
-        fun start(context: Context, kind: WorkoutKind) {
+        fun start(context: Context, kind: WorkoutKind, goal: WorkoutGoal = WorkoutGoal.OPEN) {
             _state.value = WorkoutState.Starting(kind)
             ContextCompat.startForegroundService(
                 context, Intent(context, WorkoutService::class.java)
                     .setAction(ACTION_START).putExtra(EXTRA_KIND, kind.name)
+                    .putExtra(EXTRA_GOAL_TYPE, goal.type.name).putExtra(EXTRA_GOAL_TARGET, goal.target)
             )
         }
+
+        fun segment(context: Context) = send(context, ACTION_SEGMENT)
 
         fun pause(context: Context) = send(context, ACTION_PAUSE)
         fun resume(context: Context) = send(context, ACTION_RESUME)
@@ -144,6 +157,13 @@ class WorkoutService : Service() {
     private var activeAtCheckpoint = 0L
     private var paused = false
     private var finished = false
+    private var goal = WorkoutGoal.OPEN
+    private var goalReached = false
+    private val splits = ArrayList<Pair<Long, Long>>()
+    private var lastSplitActiveMs = 0L
+    private var lastSplitAtMs = 0L
+    private val segments = ArrayList<Long>()
+    private val vibrator by lazy { getSystemService(android.os.Vibrator::class.java) }
 
     private val callback = object : ExerciseUpdateCallback {
         override fun onExerciseUpdateReceived(update: ExerciseUpdate) = handleUpdate(update)
@@ -169,6 +189,12 @@ class WorkoutService : Service() {
             ACTION_START -> {
                 val requested = intent.getStringExtra(EXTRA_KIND)
                     ?.let { runCatching { WorkoutKind.valueOf(it) }.getOrNull() } ?: WorkoutKind.OTHER
+                goal = runCatching {
+                    WorkoutGoal(
+                        WorkoutGoal.Type.valueOf(intent.getStringExtra(EXTRA_GOAL_TYPE) ?: "OPEN"),
+                        intent.getDoubleExtra(EXTRA_GOAL_TARGET, 0.0)
+                    )
+                }.getOrDefault(WorkoutGoal.OPEN)
                 // FOREGROUND_SERVICE_TYPE_HEALTH throws without Sensors/Activity permission.
                 val started = runCatching { goForeground(requested) }.onFailure {
                     Log.e(TAG, "Cannot start workout foreground service", it)
@@ -179,6 +205,12 @@ class WorkoutService : Service() {
                 }
             }
             ACTION_PAUSE -> scope.launch { runCatching { exerciseClient.pauseExercise() } }
+            ACTION_SEGMENT -> if (!finished && startMs > 0) {
+                segments += System.currentTimeMillis()
+                haptic(longArrayOf(0, 60, 80, 60))
+                scope.launch { runCatching { exerciseClient.markLap() } }
+                publish()
+            }
             ACTION_RESUME -> scope.launch { runCatching { exerciseClient.resumeExercise() } }
             ACTION_END -> scope.launch {
                 runCatching { exerciseClient.endExercise() }.onFailure {
@@ -260,7 +292,8 @@ class WorkoutService : Service() {
             )
             resetSession()
             getSharedPreferences(PREFS, MODE_PRIVATE).edit()
-                .putString("kind", kind.name).putLong("start", startMs).apply()
+                .putString("kind", kind.name).putLong("start", startMs)
+                .putString("goal_type", goal.type.name).putFloat("goal_target", goal.target.toFloat()).apply()
             publish()
         } catch (e: Exception) {
             Log.e(TAG, "Could not start workout", e)
@@ -281,7 +314,12 @@ class WorkoutService : Service() {
             return
         }
         resetSession()
-        startMs = getSharedPreferences(PREFS, MODE_PRIVATE).getLong("start", startMs)
+        val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
+        startMs = prefs.getLong("start", startMs)
+        goal = runCatching {
+            WorkoutGoal(WorkoutGoal.Type.valueOf(prefs.getString("goal_type", "OPEN")!!),
+                prefs.getFloat("goal_target", 0f).toDouble())
+        }.getOrDefault(WorkoutGoal.OPEN)
         exerciseClient.setUpdateCallback(ContextCompat.getMainExecutor(this), callback)
         publish()
     }
@@ -291,6 +329,7 @@ class WorkoutService : Service() {
         heartRate.clear(); route.clear(); pauses.clear()
         pauseStartedMs = null; latestHr = null; kcal = 0.0; distance = 0.0
         steps = null; speed = null; paused = false; finished = false
+        goalReached = false; splits.clear(); segments.clear(); lastSplitActiveMs = 0L; lastSplitAtMs = 0L
         checkpointMs = startMs; activeAtCheckpoint = 0L
     }
 
@@ -324,8 +363,11 @@ class WorkoutService : Service() {
             }
         }
 
-        val exerciseState = update.exerciseStateInfo.state
         val now = System.currentTimeMillis()
+        val activeNow = if (paused) activeAtCheckpoint else activeAtCheckpoint + (now - checkpointMs).coerceAtLeast(0)
+        checkMilestones(activeNow, now)
+
+        val exerciseState = update.exerciseStateInfo.state
         when {
             exerciseState.isEnded -> {
                 finish()
@@ -344,13 +386,39 @@ class WorkoutService : Service() {
         publish()
     }
 
+    /** Kilometre splits and goal completion, each with its own wrist tap like Apple Watch. */
+    private fun checkMilestones(activeMs: Long, now: Long) {
+        if (kind.showsDistance) {
+            val completedKm = (distance / 1000).toInt()
+            while (splits.size < completedKm) {
+                splits += now to (activeMs - lastSplitActiveMs)
+                lastSplitActiveMs = activeMs
+                lastSplitAtMs = now
+                haptic(longArrayOf(0, 80, 120, 80))
+            }
+        }
+        if (!goalReached && goal.type != WorkoutGoal.Type.OPEN &&
+            goal.progress(activeMs, distance, kcal) >= 1f
+        ) {
+            goalReached = true
+            haptic(longArrayOf(0, 200, 100, 200, 100, 400))
+        }
+    }
+
+    private fun haptic(pattern: LongArray) {
+        runCatching { vibrator.vibrate(android.os.VibrationEffect.createWaveform(pattern, -1)) }
+    }
+
     private fun publish() {
         if (finished) return
         _state.value = WorkoutState.Running(
             kind = kind, paused = paused, checkpointMs = checkpointMs,
             activeMsAtCheckpoint = activeAtCheckpoint, heartRate = latestHr,
             heartRateAvailable = hrAvailable, kcal = kcal, distanceM = distance,
-            speedMps = speed, gpsReady = gpsReady || !gpsEnabled
+            speedMps = speed, gpsReady = gpsReady || !gpsEnabled,
+            goal = goal, goalReached = goalReached,
+            lastSplit = splits.lastOrNull()?.let { splits.size to it.second },
+            lastSplitAtMs = lastSplitAtMs, segmentCount = segments.size
         )
     }
 
@@ -363,11 +431,13 @@ class WorkoutService : Service() {
         val record = WorkoutRecord(
             kind = kind, startMs = startMs, endMs = end, activeMs = activeMs,
             kcal = kcal.takeIf { it > 0 }, distanceM = distance.takeIf { it > 0 && kind.showsDistance },
-            steps = steps, heartRate = heartRate.toList(), route = route.toList(), pauses = pauses.toList()
+            steps = steps, heartRate = heartRate.toList(), route = route.toList(), pauses = pauses.toList(),
+            goal = goal, splits = splits.toList(), segments = segments.toList()
         )
         // Very short sessions are almost always accidental starts: show but don't sync.
         if (activeMs >= 60_000) {
             HealthOutbox(this).add(record.toJson())
+            ActivityTracker.onWorkout(this, startMs, end, activeMs)
             startService(Intent(this, AncsService::class.java).setAction(AncsService.ACTION_SYNC_HEALTH))
         }
         _state.value = WorkoutState.Summary(record)

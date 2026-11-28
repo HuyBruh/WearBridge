@@ -71,6 +71,8 @@ class BleConnectionManager(private val context: Context) {
         private val TOOLS_UUID = UUID.fromString("A0E3D5B6-4C6F-4E8A-9B2D-7F1E3A5C8D0B")
         /** Chunked health records for Apple Health (workouts, heart rate, steps). */
         private val HEALTH_UUID = UUID.fromString("A0E3D5B8-4C6F-4E8A-9B2D-7F1E3A5C8D0B")
+        /** JSON array of the quick replies edited in the iPhone app. */
+        private val REPLIES_UUID = UUID.fromString("A0E3D5B9-4C6F-4E8A-9B2D-7F1E3A5C8D0B")
         private const val CHUNK_FIRST = 0x01
         private const val CHUNK_LAST = 0x02
 
@@ -375,6 +377,11 @@ class BleConnectionManager(private val context: Context) {
             companion.getCharacteristic(STATUS_UUID)?.let { read(session, it) }
             companion.getCharacteristic(AncsConstants.CALL_STATE_CHARACTERISTIC_UUID)
                 ?.let { enableNotifications(session, it) }
+            companion.getCharacteristic(REPLIES_UUID)?.let { char ->
+                read(session, char)?.decodeToString()?.let {
+                    com.wearos.ancsbridge.model.QuickReplies.save(context, it)
+                }
+            }
             phoneTools.value = companion.getCharacteristic(TOOLS_UUID) != null
         }
 

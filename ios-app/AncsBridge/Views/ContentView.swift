@@ -11,6 +11,8 @@ struct WatchDraft: Codable, Identifiable {
 final class DraftInbox: ObservableObject {
     static let shared = DraftInbox()
     @Published private(set) var drafts: [WatchDraft] = []
+    /// Set when the user taps a "Reply to …" notification; ContentView opens the composer.
+    @Published var pendingOpen: UUID?
     private let file = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("watch-drafts.json")
 
@@ -79,6 +81,13 @@ struct ContentView: View {
                 if result == .sent { remove(draft.id) }
                 if result == .failed { issue = "Messages could not send. Your draft is saved." }
             }
+        }
+        .onReceive(inbox.$pendingOpen) { id in
+            guard let id else { return }
+            inbox.pendingOpen = nil
+            guard let draft = inbox.drafts.first(where: { $0.id == id }) else { return }
+            if MFMessageComposeViewController.canSendText() { composing = draft }
+            else { issue = "Messages is unavailable on this iPhone." }
         }
         .alert("Watch drafts", isPresented: Binding(get: { issue != nil }, set: { if !$0 { issue = nil } })) {
             Button("OK") { issue = nil }

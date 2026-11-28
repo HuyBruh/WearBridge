@@ -33,3 +33,33 @@ enum class WorkoutKind(
     /** Pace (min/km) reads better than speed for these. */
     val showsPace: Boolean get() = showsDistance && this != OUTDOOR_CYCLE
 }
+
+/** Workout goal, like the "…" goal options in Apple's Workout app. */
+data class WorkoutGoal(val type: Type, val target: Double) {
+    enum class Type { OPEN, TIME, DISTANCE, CALORIES }
+
+    val label: String get() = when (type) {
+        Type.OPEN -> "Open"
+        Type.TIME -> "${(target / 60_000).toInt()} min"
+        Type.DISTANCE -> if (target % 1000 == 0.0) "${(target / 1000).toInt()} km" else "%.1f km".format(target / 1000)
+        Type.CALORIES -> "${target.toInt()} kcal"
+    }
+
+    /** 0..1 (may exceed 1 once passed). */
+    fun progress(activeMs: Long, distanceM: Double, kcal: Double): Float = when (type) {
+        Type.OPEN -> 0f
+        Type.TIME -> (activeMs / target).toFloat()
+        Type.DISTANCE -> (distanceM / target).toFloat()
+        Type.CALORIES -> (kcal / target).toFloat()
+    }
+
+    companion object {
+        val OPEN = WorkoutGoal(Type.OPEN, 0.0)
+
+        fun presets(kind: WorkoutKind): List<WorkoutGoal> = buildList {
+            if (kind.showsDistance) listOf(1, 3, 5, 10).forEach { add(WorkoutGoal(Type.DISTANCE, it * 1000.0)) }
+            listOf(15, 30, 45, 60).forEach { add(WorkoutGoal(Type.TIME, it * 60_000.0)) }
+            listOf(100, 200, 300, 500).forEach { add(WorkoutGoal(Type.CALORIES, it.toDouble())) }
+        }
+    }
+}

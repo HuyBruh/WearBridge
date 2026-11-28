@@ -20,6 +20,11 @@ data class WorkoutRecord(
     val route: List<RoutePoint>,
     /** (pause start ms, resume ms) */
     val pauses: List<Pair<Long, Long>>,
+    val goal: WorkoutGoal = WorkoutGoal.OPEN,
+    /** Per-kilometre splits: (wall-clock ms at the split, active ms that km took). */
+    val splits: List<Pair<Long, Long>> = emptyList(),
+    /** Wall-clock ms of each segment the user marked. */
+    val segments: List<Long> = emptyList(),
 ) {
     data class RoutePoint(val t: Long, val lat: Double, val lon: Double, val alt: Double)
 
@@ -47,6 +52,11 @@ data class WorkoutRecord(
             }
         })
         put("pauses", JSONArray().apply { pauses.forEach { (a, b) -> put(JSONArray().put(a).put(b)) } })
+        put("splits", JSONArray().apply { splits.forEach { (t, d) -> put(JSONArray().put(t).put(d)) } })
+        put("segments", JSONArray().apply { segments.forEach { put(it) } })
+        if (goal.type != WorkoutGoal.Type.OPEN) {
+            put("goal", JSONObject().put("type", goal.type.name.lowercase()).put("target", goal.target))
+        }
     }
 
     companion object {
@@ -58,16 +68,23 @@ data class WorkoutRecord(
     }
 }
 
-/** Heart rate / step samples recorded passively during the day. */
+/** Samples recorded passively during the day. */
 object PassiveRecord {
-    fun toJson(heartRate: List<Pair<Long, Int>>, steps: List<Triple<Long, Long, Long>>): JSONObject =
-        JSONObject().apply {
-            put("type", "samples")
-            put("v", 1)
-            put("id", UUID.randomUUID().toString())
-            put("hr", JSONArray().apply { heartRate.forEach { (t, bpm) -> put(JSONArray().put(t).put(bpm)) } })
-            put("steps", JSONArray().apply {
-                steps.forEach { (s, e, n) -> put(JSONArray().put(s).put(e).put(n)) }
-            })
+    fun toJson(
+        heartRate: List<Pair<Long, Int>>,
+        steps: List<Triple<Long, Long, Double>>,
+        distance: List<Triple<Long, Long, Double>> = emptyList(),
+        floors: List<Triple<Long, Long, Double>> = emptyList(),
+    ): JSONObject = JSONObject().apply {
+        put("type", "samples")
+        put("v", 1)
+        put("id", UUID.randomUUID().toString())
+        put("hr", JSONArray().apply { heartRate.forEach { (t, bpm) -> put(JSONArray().put(t).put(bpm)) } })
+        fun intervals(list: List<Triple<Long, Long, Double>>) = JSONArray().apply {
+            list.forEach { (s, e, n) -> put(JSONArray().put(s).put(e).put(Math.round(n * 10) / 10.0)) }
         }
+        put("steps", intervals(steps))
+        put("distance", intervals(distance))
+        put("floors", intervals(floors))
+    }
 }

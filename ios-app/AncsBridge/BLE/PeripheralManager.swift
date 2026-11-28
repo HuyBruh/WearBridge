@@ -33,6 +33,7 @@ class PeripheralManager: NSObject, ObservableObject {
     private var readSnapshots: [UUID: Data] = [:]
     /// Health records being reassembled, per connected watch.
     private var healthBuffers: [UUID: Data] = [:]
+    private var replySnapshots: [UUID: Data] = [:]
     private var serviceAdded = false
     private var scanTimer: Timer?
 
@@ -249,6 +250,8 @@ class PeripheralManager: NSObject, ObservableObject {
         )
 
         UIDevice.current.isBatteryMonitoringEnabled = true
+        let replies = CBMutableCharacteristic(type: BLEConstants.repliesUUID, properties: [.read],
+            value: nil, permissions: [.readEncryptionRequired])
         let health = CBMutableCharacteristic(type: BLEConstants.healthUUID, properties: [.write],
             value: nil, permissions: [.writeEncryptionRequired])
         let tools = CBMutableCharacteristic(type: BLEConstants.toolsUUID, properties: [.read, .write],
@@ -266,7 +269,7 @@ class PeripheralManager: NSObject, ObservableObject {
             type: BLEConstants.companionServiceUUID,
             primary: true
         )
-        companionService?.characteristics = [statusCharacteristic!, quickReplyCharacteristic, callStateCharacteristic!, draft, tools, health]
+        companionService?.characteristics = [statusCharacteristic!, quickReplyCharacteristic, callStateCharacteristic!, draft, tools, health, replies]
 
         peripheralManager.add(companionService!)
         serviceAdded = true
@@ -343,6 +346,15 @@ extension PeripheralManager: CBPeripheralManagerDelegate {
             }
             request.value = Data(data.dropFirst(request.offset))
             peripheral.respond(to: request, withResult: .success)
+        } else if request.characteristic.uuid == BLEConstants.repliesUUID {
+            let key = request.central.identifier
+            if request.offset == 0 { replySnapshots[key] = QuickReplyStore.watchPayload() }
+            guard let data = replySnapshots[key], request.offset <= data.count else {
+                peripheral.respond(to: request, withResult: .invalidOffset)
+                return
+            }
+            request.value = Data(data.dropFirst(request.offset))
+            peripheral.respond(to: request, withResult: .success)
         } else if request.characteristic.uuid == BLEConstants.connectionStatusUUID {
             request.value = Data([0x01])
             peripheral.respond(to: request, withResult: .success)
@@ -395,6 +407,16 @@ extension PeripheralManager: CBPeripheralManagerDelegate {
             }
             let saved = DraftInbox.shared.save(draft)
             peripheral.respond(to: first, withResult: saved ? .success : .unlikelyError)
+            if saved {
+                // One tap from the lock screen opens the composer with the reply filled in.
+                let content = UNMutableNotificationContent()
+                content.title = draft.sender.isEmpty ? "Reply from your watch" : "Reply to \(draft.sender)"
+                content.body = draft.body
+                content.sound = .default
+                content.userInfo = ["draftID": draft.id.uuidString]
+                UNUserNotificationCenter.current().add(UNNotificationRequest(
+                    identifier: "draft-\(draft.id.uuidString)", content: content, trigger: nil))
+            }
             return
         }
         for request in requests {
@@ -457,6 +479,7 @@ extension PeripheralManager: CBPeripheralManagerDelegate {
             if let service = services.first(where: { $0.uuid == BLEConstants.companionServiceUUID }),
                let characteristics = service.characteristics,
                characteristics.contains(where: { $0.uuid == BLEConstants.healthUUID }),
+               characteristics.contains(where: { $0.uuid == BLEConstants.repliesUUID }),
                characteristics.contains(where: { $0.uuid == BLEConstants.toolsUUID }),
                characteristics.contains(where: { $0.uuid == BLEConstants.draftUUID }) {
                 companionService = service

@@ -26,6 +26,7 @@ import androidx.compose.material.icons.automirrored.rounded.DirectionsRun
 import androidx.compose.material.icons.automirrored.rounded.DirectionsWalk
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.Flag
 import androidx.compose.material.icons.rounded.FitnessCenter
 import androidx.compose.material.icons.rounded.Hiking
 import androidx.compose.material.icons.rounded.MonitorHeart
@@ -63,6 +64,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.wear.compose.material3.Button
 import androidx.wear.compose.material3.ButtonDefaults
+import androidx.wear.compose.material3.CircularProgressIndicator
+import androidx.wear.compose.material3.ProgressIndicatorDefaults
 import androidx.wear.compose.material3.ListHeader
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.ScreenScaffold
@@ -70,6 +73,7 @@ import androidx.wear.compose.material3.SwitchButton
 import androidx.wear.compose.material3.Text
 import com.wearos.ancsbridge.ble.MediaCommand
 import com.wearos.ancsbridge.ble.NowPlaying
+import com.wearos.ancsbridge.health.WorkoutGoal
 import com.wearos.ancsbridge.health.WorkoutKind
 import com.wearos.ancsbridge.health.WorkoutRecord
 import com.wearos.ancsbridge.health.WorkoutState
@@ -114,28 +118,74 @@ private fun workoutPermissions(gps: Boolean): Array<String> = buildList {
 // Workout list
 // ---------------------------------------------------------------------------------------
 
+/** Asks for sensor/location permission, then starts the workout. */
 @Composable
-internal fun WorkoutListScreen(viewModel: MainViewModel, openLive: () -> Unit) {
-    var pending by remember { mutableStateOf<WorkoutKind?>(null) }
+internal fun rememberWorkoutStarter(viewModel: MainViewModel, openLive: () -> Unit): (WorkoutKind, WorkoutGoal) -> Unit {
+    var pending by remember { mutableStateOf<Pair<WorkoutKind, WorkoutGoal>?>(null) }
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
-        // Start even if GPS was refused: Health Services falls back to the step-based distance.
-        pending?.let { viewModel.startWorkout(it); openLive() }
+        // Start even if GPS was refused: Health Services falls back to step-based distance.
+        pending?.let { (kind, goal) -> viewModel.startWorkout(kind, goal); openLive() }
         pending = null
     }
-    WorkoutListContent { kind ->
-        pending = kind
+    return { kind, goal ->
+        pending = kind to goal
         launcher.launch(workoutPermissions(kind.usesGps))
     }
 }
 
 @Composable
-internal fun WorkoutListContent(onStart: (WorkoutKind) -> Unit) {
+internal fun WorkoutListScreen(viewModel: MainViewModel, openGoals: (WorkoutKind) -> Unit, openLive: () -> Unit) {
+    val start = rememberWorkoutStarter(viewModel, openLive)
+    WorkoutListContent(onStart = { start(it, WorkoutGoal.OPEN) }, onGoals = openGoals)
+}
+
+@Composable
+internal fun WorkoutGoalScreen(viewModel: MainViewModel, kind: WorkoutKind, openLive: () -> Unit) {
+    val start = rememberWorkoutStarter(viewModel, openLive)
+    ListScreen {
+        item { ListHeader { Text(kind.label) } }
+        item {
+            Button(
+                onClick = { start(kind, WorkoutGoal.OPEN) },
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2B3A10), contentColor = WorkoutColors.Green),
+                secondaryLabel = { Text("No goal") },
+            ) { Text("Open") }
+        }
+        WorkoutGoal.presets(kind).forEach { goal ->
+            item(key = goal.type.name + goal.target) {
+                Button(
+                    onClick = { start(kind, goal) },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.filledTonalButtonColors(),
+                    secondaryLabel = {
+                        Text(when (goal.type) {
+                            WorkoutGoal.Type.DISTANCE -> "Distance"
+                            WorkoutGoal.Type.TIME -> "Time"
+                            WorkoutGoal.Type.CALORIES -> "Calories"
+                            WorkoutGoal.Type.OPEN -> ""
+                        })
+                    },
+                ) { Text(goal.label) }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun WorkoutListContent(onStart: (WorkoutKind) -> Unit, onGoals: (WorkoutKind) -> Unit = {}) {
     ListScreen {
         item { ListHeader { Text("Workout") } }
+        item {
+            Text("Tap to start · hold for goals", style = MaterialTheme.typography.labelSmall,
+                color = Color(0xFF98989F), textAlign = TextAlign.Center)
+        }
         WorkoutKind.entries.forEach { kind ->
             item(key = kind.name) {
                 Button(
                     onClick = { onStart(kind) },
+                    onLongClick = { onGoals(kind) },
+                    onLongClickLabel = "Set a goal",
                     modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.filledTonalButtonColors(),
                     icon = {
@@ -174,6 +224,7 @@ internal fun LiveWorkoutScreen(viewModel: MainViewModel, onDone: () -> Unit) {
             onPause = viewModel::pauseWorkout,
             onResume = viewModel::resumeWorkout,
             onEnd = viewModel::endWorkout,
+            onSegment = viewModel::markSegment,
             nowPlaying = if (mediaAvailable) nowPlaying else null,
             supportedCommands = supported,
             sendMedia = { viewModel.sendMediaCommand(it.code) },
@@ -216,6 +267,7 @@ internal fun LiveWorkoutContent(
     onPause: () -> Unit,
     onResume: () -> Unit,
     onEnd: () -> Unit,
+    onSegment: () -> Unit = {},
     nowPlaying: NowPlaying?,
     supportedCommands: Set<Int>?,
     sendMedia: (MediaCommand) -> Unit,
@@ -230,7 +282,9 @@ internal fun LiveWorkoutContent(
                 onPause(); scope.launch { pagerState.animateScrollToPage(1) }
             }, onResume = {
                 onResume(); scope.launch { pagerState.animateScrollToPage(1) }
-            }, onEnd = onEnd)
+            }, onEnd = onEnd, onSegment = {
+                onSegment(); scope.launch { pagerState.animateScrollToPage(1) }
+            })
             1 -> WorkoutMetrics(state)
             else -> nowPlaying?.let { NowPlayingContent(it, supportedCommands, sendMedia) }
         }
@@ -238,28 +292,44 @@ internal fun LiveWorkoutContent(
 }
 
 @Composable
-private fun WorkoutControls(paused: Boolean, onPause: () -> Unit, onResume: () -> Unit, onEnd: () -> Unit) {
+private fun WorkoutControls(
+    paused: Boolean,
+    onPause: () -> Unit,
+    onResume: () -> Unit,
+    onEnd: () -> Unit,
+    onSegment: () -> Unit,
+) {
     ScreenScaffold {
-        Row(
+        Column(
             Modifier.fillMaxSize(),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-            verticalAlignment = Alignment.CenterVertically
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
         ) {
-            ControlButton(Icons.Rounded.Close, "End", WorkoutColors.End, Color(0xFF3A1210), onEnd)
-            if (paused) ControlButton(Icons.Rounded.PlayArrow, "Resume", WorkoutColors.Green, Color(0xFF233108), onResume)
-            else ControlButton(Icons.Rounded.Pause, "Pause", WorkoutColors.Timer, Color(0xFF3A3208), onPause)
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                ControlButton(Icons.Rounded.Close, "End", WorkoutColors.End, Color(0xFF3A1210), onEnd)
+                if (paused) ControlButton(Icons.Rounded.PlayArrow, "Resume", WorkoutColors.Green, Color(0xFF233108), onResume)
+                else ControlButton(Icons.Rounded.Pause, "Pause", WorkoutColors.Timer, Color(0xFF3A3208), onPause)
+            }
+            Spacer(Modifier.height(8.dp))
+            ControlButton(Icons.Rounded.Flag, "Segment", WorkoutColors.Distance, Color(0xFF0E2A36), onSegment, size = 48)
         }
     }
 }
 
 @Composable
-private fun ControlButton(icon: ImageVector, label: String, tint: Color, background: Color, onClick: () -> Unit) {
+private fun ControlButton(
+    icon: ImageVector, label: String, tint: Color, background: Color, onClick: () -> Unit, size: Int = 64,
+) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Box(
-            Modifier.size(64.dp).clip(CircleShape).background(background).clickable(onClick = onClick),
+            Modifier.size(size.dp).clip(CircleShape).background(background).clickable(onClick = onClick),
             contentAlignment = Alignment.Center
         ) {
-            androidx.wear.compose.material3.Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(36.dp))
+            androidx.wear.compose.material3.Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size((size * 0.56f).dp))
         }
         Spacer(Modifier.height(4.dp))
         Text(label, style = MaterialTheme.typography.labelSmall)
@@ -275,8 +345,35 @@ internal fun WorkoutMetrics(state: WorkoutState.Running, staticNow: Long? = null
     val active = state.activeMs(now)
     // Apple blinks the timer while paused.
     val timerVisible = !state.paused || (now / 600) % 2 == 0L
+    val goalProgress = state.goal.progress(active, state.distanceM, state.kcal)
+    val showSplit = state.lastSplit != null && now - state.lastSplitAtMs < 6_000
 
     ScreenScaffold {
+        if (state.goal.type != WorkoutGoal.Type.OPEN) {
+            // Goal progress around the bezel, as on Apple Watch.
+            CircularProgressIndicator(
+                progress = { goalProgress.coerceIn(0f, 1f) },
+                modifier = Modifier.fillMaxSize().padding(2.dp),
+                colors = ProgressIndicatorDefaults.colors(
+                    indicatorColor = WorkoutColors.Green, trackColor = Color(0xFF1E2A0C)
+                ),
+                strokeWidth = 5.dp,
+            )
+        }
+        if (showSplit) {
+            val (km, ms) = state.lastSplit!!
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Column(
+                    Modifier.clip(CircleShape).background(Color(0xFF0E2A36)).padding(26.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text("KM $km", color = WorkoutColors.Distance, style = MaterialTheme.typography.labelMedium)
+                    Text(formatPace(ms, 1000.0), fontSize = 34.sp, fontWeight = FontWeight.SemiBold)
+                    Text("SPLIT", style = MaterialTheme.typography.labelSmall, color = Color(0xFF98989F))
+                }
+            }
+            return@ScreenScaffold
+        }
         Column(
             Modifier.fillMaxSize().padding(start = 34.dp, end = 16.dp, top = 30.dp),
             verticalArrangement = Arrangement.Center
@@ -288,6 +385,11 @@ internal fun WorkoutMetrics(state: WorkoutState.Running, staticNow: Long? = null
             )
             if (state.paused) {
                 Text("PAUSED", color = WorkoutColors.Timer, style = MaterialTheme.typography.labelSmall)
+            } else if (state.goal.type != WorkoutGoal.Type.OPEN) {
+                Text(
+                    if (state.goalReached) "GOAL REACHED" else "${(goalProgress * 100).toInt()}% OF ${state.goal.label.uppercase()}",
+                    color = WorkoutColors.Green, style = MaterialTheme.typography.labelSmall
+                )
             }
             Metric(
                 value = state.heartRate?.toString() ?: "--", unit = "BPM",
@@ -348,8 +450,21 @@ internal fun SummaryContent(record: WorkoutRecord, healthAvailable: Boolean, onD
                 SummaryRow("Avg. Pace", formatPace(record.activeMs, it) + " /km", WorkoutColors.Distance)
             }
         }
+        if (record.goal.type != WorkoutGoal.Type.OPEN) item {
+            val reached = record.goal.progress(record.activeMs, record.distanceM ?: 0.0, record.kcal ?: 0.0) >= 1f
+            SummaryRow("Goal · ${record.goal.label}", if (reached) "Completed" else "Not completed", WorkoutColors.Green)
+        }
         record.avgHeartRate?.let { item { SummaryRow("Avg. Heart Rate", "$it bpm", WorkoutColors.Heart) } }
         record.maxHeartRate?.let { item { SummaryRow("Max Heart Rate", "$it bpm", WorkoutColors.Heart) } }
+        if (record.splits.isNotEmpty()) {
+            item { ListHeader { Text("Splits") } }
+            record.splits.forEachIndexed { index, (_, ms) ->
+                item { SummaryRow("Km ${index + 1}", formatPace(ms, 1000.0) + " /km", WorkoutColors.Distance) }
+            }
+        }
+        if (record.segments.isNotEmpty()) item {
+            SummaryRow("Segments", "${record.segments.size}", WorkoutColors.Distance)
+        }
         if (!tooShort) item {
             Text(
                 if (healthAvailable) "Sending to Apple Health…" else "Syncs to Apple Health when your iPhone is nearby",

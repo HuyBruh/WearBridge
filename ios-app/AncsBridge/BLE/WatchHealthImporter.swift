@@ -29,7 +29,8 @@ final class WatchHealthImporter: ObservableObject {
     static var shareTypes: Set<HKSampleType> {
         var types: Set<HKSampleType> = [HKObjectType.workoutType(), HKSeriesType.workoutRoute()]
         let ids: [HKQuantityTypeIdentifier] = [
-            .heartRate, .activeEnergyBurned, .distanceWalkingRunning, .distanceCycling, .stepCount
+            .heartRate, .activeEnergyBurned, .distanceWalkingRunning, .distanceCycling, .stepCount,
+            .flightsClimbed
         ]
         for id in ids { types.insert(HKQuantityType(id)) }
         return types
@@ -261,6 +262,21 @@ final class WatchHealthImporter: ObservableObject {
             events.append(HKWorkoutEvent(type: .pause, dateInterval: DateInterval(start: paused, duration: 0), metadata: nil))
             events.append(HKWorkoutEvent(type: .resume, dateInterval: DateInterval(start: resumed, duration: 0), metadata: nil))
         }
+        // Kilometre splits as laps, user-marked segments as segments (both show in Fitness).
+        var previous = start
+        for split in record["splits"] as? [[NSNumber]] ?? [] where split.count >= 1 {
+            let time = Date(timeIntervalSince1970: split[0].doubleValue / 1000)
+            guard time > previous, time <= end else { continue }
+            events.append(HKWorkoutEvent(type: .lap, dateInterval: DateInterval(start: previous, end: time), metadata: nil))
+            previous = time
+        }
+        previous = start
+        for mark in record["segments"] as? [NSNumber] ?? [] {
+            let time = Date(timeIntervalSince1970: mark.doubleValue / 1000)
+            guard time > previous, time <= end else { continue }
+            events.append(HKWorkoutEvent(type: .segment, dateInterval: DateInterval(start: previous, end: time), metadata: nil))
+            previous = time
+        }
         if !events.isEmpty { try await builder.addWorkoutEvents(events) }
 
         try await builder.addMetadata([
@@ -319,6 +335,22 @@ final class WatchHealthImporter: ObservableObject {
                 start: Date(timeIntervalSince1970: Double(startMs) / 1000),
                 end: Date(timeIntervalSince1970: Double(endMs) / 1000), device: Self.device,
                 metadata: [HKMetadataKeySyncIdentifier: "wearbridge.steps.\(startMs)-\(endMs)", HKMetadataKeySyncVersion: 1]))
+        }
+        // Daily distance and floors arrive as interval deltas, like steps.
+        let intervalTypes: [(String, HKQuantityTypeIdentifier, HKUnit)] = [
+            ("distance", .distanceWalkingRunning, .meter()),
+            ("floors", .flightsClimbed, .count()),
+        ]
+        for (key, identifier, unit) in intervalTypes {
+            for interval in record[key] as? [[NSNumber]] ?? [] where interval.count >= 3 {
+                let startMs = interval[0].int64Value, endMs = interval[1].int64Value
+                guard endMs > startMs, interval[2].doubleValue > 0 else { continue }
+                objects.append(HKQuantitySample(
+                    type: HKQuantityType(identifier), quantity: HKQuantity(unit: unit, doubleValue: interval[2].doubleValue),
+                    start: Date(timeIntervalSince1970: Double(startMs) / 1000),
+                    end: Date(timeIntervalSince1970: Double(endMs) / 1000), device: Self.device,
+                    metadata: [HKMetadataKeySyncIdentifier: "wearbridge.\(key).\(startMs)-\(endMs)", HKMetadataKeySyncVersion: 1]))
+            }
         }
         if !objects.isEmpty { try await store.save(objects) }
     }

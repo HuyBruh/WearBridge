@@ -57,8 +57,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val healthSyncing = AncsService.healthSyncing
     val healthAvailable = AncsService.healthAvailable
 
-    fun startWorkout(kind: com.wearos.ancsbridge.health.WorkoutKind) =
-        com.wearos.ancsbridge.health.WorkoutService.start(getApplication(), kind)
+    fun startWorkout(
+        kind: com.wearos.ancsbridge.health.WorkoutKind,
+        goal: com.wearos.ancsbridge.health.WorkoutGoal = com.wearos.ancsbridge.health.WorkoutGoal.OPEN
+    ) = com.wearos.ancsbridge.health.WorkoutService.start(getApplication(), kind, goal)
+    val activityRings = com.wearos.ancsbridge.health.ActivityTracker.rings
+    fun activityRingsNow() = com.wearos.ancsbridge.health.ActivityTracker.ringsNow(getApplication())
+    fun setActivityGoals(move: Int, exercise: Int, stand: Int) =
+        com.wearos.ancsbridge.health.ActivityTracker.setGoals(getApplication(), move, exercise, stand)
+    fun markSegment() = com.wearos.ancsbridge.health.WorkoutService.segment(getApplication())
     fun pauseWorkout() = com.wearos.ancsbridge.health.WorkoutService.pause(getApplication())
     fun resumeWorkout() = com.wearos.ancsbridge.health.WorkoutService.resume(getApplication())
     fun endWorkout() = com.wearos.ancsbridge.health.WorkoutService.end(getApplication())

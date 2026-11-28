@@ -2,8 +2,8 @@ import Foundation
 import Combine
 
 class QuickReplyStore: ObservableObject {
-    private static let key = "quick_reply_messages"
-    private static let defaults: [String] = [
+    static let key = "quick_reply_messages"
+    static let defaults: [String] = [
         "Can't talk right now.",
         "Hey! Can't talk rn, what's up?",
         "I'll call you back shortly.",
@@ -25,6 +25,13 @@ class QuickReplyStore: ObservableObject {
 
     func save() {
         UserDefaults.standard.set(messages, forKey: Self.key)
+    }
+
+    /// What the watch reads (A0E3D5B9): the current list as a JSON array.
+    static func watchPayload() -> Data {
+        let list = UserDefaults.standard.stringArray(forKey: key) ?? defaults
+        let trimmed = list.map { String($0.prefix(160)) }.filter { !$0.isEmpty }.prefix(12)
+        return (try? JSONSerialization.data(withJSONObject: Array(trimmed))) ?? Data("[]".utf8)
     }
 
     func add(_ message: String) {

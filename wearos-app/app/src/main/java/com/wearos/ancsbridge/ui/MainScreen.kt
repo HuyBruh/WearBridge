@@ -101,16 +101,32 @@ private object Routes {
     const val PAIR = "pair"
     const val WORKOUTS = "workouts"
     const val WORKOUT_LIVE = "workout_live"
+    const val WORKOUT_GOAL = "workout_goal"
+    const val ACTIVITY = "activity"
     const val HEALTH = "health"
 }
 
 /** Root: system time on top, swipe right to go back on every screen (native Wear OS). */
 @Composable
-fun MainScreen(viewModel: MainViewModel, openWorkout: Boolean = false) {
+fun MainScreen(viewModel: MainViewModel, deepLink: String? = null, onDeepLinkHandled: () -> Unit = {}) {
     val navController = rememberSwipeDismissableNavController()
-    LaunchedEffect(openWorkout) {
-        if (openWorkout && viewModel.workoutState.value !is com.wearos.ancsbridge.health.WorkoutState.Idle) {
-            navController.navigate(Routes.WORKOUT_LIVE)
+    val startFromLink = rememberWorkoutStarter(viewModel) {
+        navController.navigate(Routes.WORKOUT_LIVE) { popUpTo(Routes.HOME) }
+    }
+    // Tiles, complications and the workout chip open a specific screen.
+    LaunchedEffect(deepLink) {
+        val link = deepLink ?: return@LaunchedEffect
+        onDeepLinkHandled()
+        val workoutRunning = viewModel.workoutState.value !is com.wearos.ancsbridge.health.WorkoutState.Idle
+        when {
+            link == MainActivity.OPEN_LIVE_WORKOUT && workoutRunning -> navController.navigate(Routes.WORKOUT_LIVE)
+            link == MainActivity.OPEN_ACTIVITY -> navController.navigate(Routes.ACTIVITY)
+            link.startsWith(MainActivity.OPEN_WORKOUT_PREFIX) -> {
+                if (workoutRunning) navController.navigate(Routes.WORKOUT_LIVE)
+                else runCatching {
+                    com.wearos.ancsbridge.health.WorkoutKind.valueOf(link.removePrefix(MainActivity.OPEN_WORKOUT_PREFIX))
+                }.getOrNull()?.let { startFromLink(it, com.wearos.ancsbridge.health.WorkoutGoal.OPEN) }
+            }
         }
     }
     AppScaffold(timeText = { TimeText() }) {
@@ -121,7 +137,17 @@ fun MainScreen(viewModel: MainViewModel, openWorkout: Boolean = false) {
             composable(Routes.NOTIFICATIONS) { NotificationSettingsScreen(viewModel) }
             composable(Routes.PAIR) { PairScreen(viewModel) { navController.popBackStack() } }
             composable(Routes.WORKOUTS) {
-                WorkoutListScreen(viewModel) {
+                WorkoutListScreen(
+                    viewModel,
+                    openGoals = { navController.navigate("${Routes.WORKOUT_GOAL}/${it.name}") },
+                    openLive = { navController.navigate(Routes.WORKOUT_LIVE) { popUpTo(Routes.HOME) } }
+                )
+            }
+            composable("${Routes.WORKOUT_GOAL}/{kind}") { entry ->
+                val kind = entry.arguments?.getString("kind")
+                    ?.let { runCatching { com.wearos.ancsbridge.health.WorkoutKind.valueOf(it) }.getOrNull() }
+                    ?: com.wearos.ancsbridge.health.WorkoutKind.OTHER
+                WorkoutGoalScreen(viewModel, kind) {
                     navController.navigate(Routes.WORKOUT_LIVE) { popUpTo(Routes.HOME) }
                 }
             }
@@ -129,6 +155,7 @@ fun MainScreen(viewModel: MainViewModel, openWorkout: Boolean = false) {
                 LiveWorkoutScreen(viewModel) { navController.popBackStack(Routes.HOME, inclusive = false) }
             }
             composable(Routes.HEALTH) { HealthScreen(viewModel) }
+            composable(Routes.ACTIVITY) { ActivityScreen(viewModel) }
         }
     }
 }
@@ -184,10 +211,13 @@ private fun HomeScreen(viewModel: MainViewModel, navigate: (String) -> Unit) {
     val hasBonded = remember(state) { viewModel.hasBondedIPhone() }
     val workout by viewModel.workoutState.collectAsState()
     val healthPending by viewModel.healthPending.collectAsState()
+    LaunchedEffect(Unit) { viewModel.activityRingsNow() }
+    val rings by viewModel.activityRings.collectAsState()
     HomeContent(
         state = state, hasBonded = hasBonded, nowPlaying = nowPlaying,
         workoutActive = workout !is com.wearos.ancsbridge.health.WorkoutState.Idle,
         healthPending = healthPending,
+        rings = rings,
         mediaAvailable = mediaAvailable, phoneTools = phoneTools, navigate = navigate,
         onClearAll = viewModel::clearAllNotifications, onDisconnect = viewModel::disconnect,
         onReconnect = viewModel::startService
@@ -201,6 +231,7 @@ internal fun HomeContent(
     nowPlaying: NowPlaying,
     workoutActive: Boolean,
     healthPending: Int,
+    rings: com.wearos.ancsbridge.health.Rings,
     mediaAvailable: Boolean,
     phoneTools: Boolean,
     navigate: (String) -> Unit,
@@ -221,6 +252,7 @@ internal fun HomeContent(
                     "Syncs to Apple Health") { navigate(Routes.WORKOUTS) }
             }
         }
+        item { ActivitySummaryButton(rings) { navigate(Routes.ACTIVITY) } }
         item {
             NavButton(Icons.Rounded.Favorite, Color(0xFFFF375F), "Apple Health",
                 if (healthPending > 0) "$healthPending waiting to sync" else "Heart rate, steps, workouts") {

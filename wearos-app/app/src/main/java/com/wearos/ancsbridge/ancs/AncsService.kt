@@ -106,6 +106,7 @@ class AncsService : Service() {
     private val activeNotificationIds = ArrayDeque<Int>()
 
     private var activeCallUid: Long = -1
+    private var phoneRefreshJob: Job? = null
 
     // UIDs that belong to the current ANCS session: only these may send actions to iOS.
     // Alerts from an earlier session stay visible (like Apple Watch) but become read-only.
@@ -169,9 +170,22 @@ class AncsService : Service() {
                 // The companion service was just found: deliver queued workouts/health data.
                 healthAvailable.value = it && connectionManager.canSyncHealth
                 if (it) syncHealth()
+                // Keep the iPhone battery complication fresh while the companion is reachable.
+                phoneRefreshJob?.cancel()
+                if (it) phoneRefreshJob = scope.launch {
+                    while (true) {
+                        connectionManager.refreshPhone()
+                        kotlinx.coroutines.delay(15 * 60_000L)
+                    }
+                }
             }
         }
-        scope.launch { connectionManager.phoneSummary.collect { phoneSummary.value = it } }
+        scope.launch {
+            connectionManager.phoneSummary.collect {
+                phoneSummary.value = it
+                if (it.isNotBlank()) com.wearos.ancsbridge.tiles.PhoneBatteryComplicationService.save(this@AncsService, it)
+            }
+        }
         scope.launch { connectionManager.supportedCommands.collect { supportedMediaCommands.value = it } }
 
         scope.launch {
@@ -712,10 +726,13 @@ class AncsService : Service() {
                 putExtra("sender", notification.title)
                 putExtra("session", sessionToken)
             }
-            val input = androidx.core.app.RemoteInput.Builder("body").setLabel("Draft for iPhone").build()
+            // Reply chips from the iPhone app's list, plus voice/keyboard, like Apple Watch.
+            val input = androidx.core.app.RemoteInput.Builder("body").setLabel("Reply")
+                .setChoices(com.wearos.ancsbridge.model.QuickReplies.load(this).toTypedArray())
+                .build()
             val target = PendingIntent.getService(this, notifId, draftIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
-            builder.addAction(NotificationCompat.Action.Builder(R.drawable.ic_chat_reply, "Draft reply", target)
+            builder.addAction(NotificationCompat.Action.Builder(R.drawable.ic_chat_reply, "Reply", target)
                 .addRemoteInput(input).build())
         }
 

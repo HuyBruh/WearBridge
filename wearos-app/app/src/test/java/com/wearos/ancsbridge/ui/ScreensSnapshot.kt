@@ -49,12 +49,12 @@ class ScreensSnapshot {
 
     @Test
     fun homeConnected() = shot {
-        HomeContent(ConnectionState.Connected("Huy's iPhone"), true, song, false, 2, true, true, {}, {}, {}, {})
+        HomeContent(ConnectionState.Connected("Huy's iPhone"), true, song, false, 2, rings, true, true, {}, {}, {}, {})
     }
 
     @Test
     fun homeDisconnected() = shot {
-        HomeContent(ConnectionState.Disconnected(), true, NowPlaying(), false, 0, false, false, {}, {}, {}, {})
+        HomeContent(ConnectionState.Disconnected(), true, NowPlaying(), false, 0, rings, false, false, {}, {}, {}, {})
     }
 
     @Test
@@ -103,6 +103,25 @@ class ScreensSnapshot {
         }
     }
 
+    private val rings = com.wearos.ancsbridge.health.Rings(
+        moveKcal = 320, moveGoal = 400, exerciseMin = 24, exerciseGoal = 30,
+        standHours = 9, standGoal = 12, steps = 8412, hasData = true
+    )
+
+    @Test
+    fun activity() = shot { ActivityContent(rings, true, {}) { _, _, _ -> } }
+
+    @Test
+    fun workoutGoalRing() = shot {
+        WorkoutMetrics(running.copy(goal = com.wearos.ancsbridge.health.WorkoutGoal(
+            com.wearos.ancsbridge.health.WorkoutGoal.Type.DISTANCE, 10_000.0)), staticNow = 1_000_000L)
+    }
+
+    @Test
+    fun workoutSplit() = shot {
+        WorkoutMetrics(running.copy(lastSplit = 5 to 293_000L, lastSplitAtMs = 999_000L), staticNow = 1_000_000L)
+    }
+
     private val running = com.wearos.ancsbridge.health.WorkoutState.Running(
         kind = com.wearos.ancsbridge.health.WorkoutKind.OUTDOOR_RUN, paused = false,
         checkpointMs = 1_000_000L, activeMsAtCheckpoint = 1_534_560L, heartRate = 148,
@@ -114,11 +133,11 @@ class ScreensSnapshot {
 
     @Test
     fun workoutControls() = shot {
-        LiveWorkoutContent(running, {}, {}, {}, null, null, {}, initialPage = 0)
+        LiveWorkoutContent(running, {}, {}, {}, {}, null, null, {}, initialPage = 0)
     }
 
     @Test
-    fun workoutList() = shot { WorkoutListContent {} }
+    fun workoutList() = shot { WorkoutListContent(onStart = {}) }
 
     @Test
     fun workoutSummary() = shot {

@@ -25,6 +25,10 @@ iPhone (iOS 26)                       Wear OS Watch
 - **Now Playing** — play/pause, next/previous and crown-controlled volume for whatever plays on the iPhone (Apple Media Service)
 - **Workouts → Apple Health** — Apple Workout-style app (walk, run, cycle, HIIT, strength, yoga…) with live heart rate, calories, distance, pace and GPS route; saved to Apple Health with route, heart rate and pauses
 - **All-day heart rate & steps → Apple Health** (opt-in), queued on the watch until the iPhone app stores them
+- **Activity rings** — Move, Exercise and Stand in the app, an Activity tile and a Move complication
+- **Workout goals & splits** — time/distance/calorie goals with a progress ring, km split taps, segments
+- **Tiles & complications** — one-tap Workout tile, iPhone battery complication
+- **Quick replies from your iPhone list** — on the call screen and as reply chips on Messages alerts
 - **Native Wear OS UI** — Material 3 for Wear OS, swipe-to-go-back, curved time text, iOS-style switches
 - **Notification Settings** — turn future alerts from observed apps on or off and hide message previews. Incoming call screens are separate.
 - **75+ app icon mappings** — WhatsApp, Slack, Gmail, Instagram, Telegram, Discord, and many more show their own icons (Material Design, 25% padded for Wear OS)

@@ -79,6 +79,7 @@ Crown rotation on the Now Playing screen sends Volume Up/Down.
 | Quick Reply | `A0E3D5B3-4C6F-4E8A-9B2D-7F1E3A5C8D0B` | Write — watch sends `"callerName\|replyText"` |
 | Call State | `A0E3D5B4-4C6F-4E8A-9B2D-7F1E3A5C8D0B` | Read/Notify — iPhone pushes call state (0x00=idle, 0x01=ringing, 0x02=active, 0x03=ended) |
 
+| Quick Replies | `A0E3D5B9-4C6F-4E8A-9B2D-7F1E3A5C8D0B` | Read (encrypted) — JSON array of the iPhone app's quick replies; watch caches it in `QuickReplies` and uses it on the call screen and as reply chips |
 | Health | `A0E3D5B8-4C6F-4E8A-9B2D-7F1E3A5C8D0B` | Write (encrypted) — chunked health records: `[flags][payload]`, flags 0x01 first, 0x02 last |
 
 ## Workouts & Apple Health
@@ -87,6 +88,10 @@ Crown rotation on the Now Playing screen sends Volume Up/Down.
 - `PassiveHealthService` (opt-in, watch → Apple Health screen) receives all-day `HEART_RATE_BPM` and `STEPS_DAILY`; `StepDeltas` turns daily totals into interval samples.
 - `AncsService.syncHealth()` drains the outbox oldest-first whenever the companion service appears (and on `ACTION_SYNC_HEALTH`). A record is deleted only after the iPhone acks its last chunk.
 - iPhone: `PeripheralManager.handleHealthChunk` reassembles; `WatchHealthImporter.receive` writes the record to Application Support before acking, then imports into HealthKit (`HKWorkoutBuilder` + samples + pause events + `HKWorkoutRouteBuilder`). Locked iPhone (`errorDatabaseInaccessible`) → retried on `protectedDataDidBecomeAvailable`. Dedupe: workouts by `HKMetadataKeySyncIdentifier` query, samples by per-sample sync identifiers.
+- Passive also reads `CALORIES_DAILY`, `DISTANCE_DAILY`, `FLOORS_DAILY`; distance and floors go to Health as interval samples (`DailyDeltas`).
+- Workouts support goals (time / distance / calories, ring around the bezel), automatic km splits (haptic + banner) and user segments; iPhone writes splits as `.lap` and segments as `.segment` workout events.
+- Activity rings (`ActivityTracker`): Move = `CALORIES_DAILY` minus a resting rate learned from quiet periods; Exercise = workout minutes + brisk walking (≥100 steps/min) outside workouts; Stand = hours with ≥60 steps. Shown in the app, the Activity tile and the Move complication.
+- Tiles: `ActivityTileService` (rings), `WorkoutTileService` (one-tap walk/run/cycle). Complications: Move, iPhone battery (parsed from the companion status summary, refreshed every 15 min while connected).
 - Toggle key on iPhone is still `syncWorkouts` (Settings → Apple Health); when off, the first chunk is refused and the watch keeps the record.
 
 ## Quick Reply Flow
@@ -95,7 +100,8 @@ Crown rotation on the Now Playing screen sends Volume Up/Down.
 2. iPhone: `PeripheralManager` receives write → `QuickReplyLauncher` opens `shortcuts://run-shortcut?name=WearBridge%20Reply&input=text&text=…` (`&`, `=`, `+` percent-encoded)
 3. iOS only opens URLs from the foreground: with the app in the background (the usual case), the reply becomes a local notification and tapping it runs the shortcut
 4. User creates iOS Shortcut "WearBridge Reply" to send SMS/iMessage with the input text
-5. The reply list edited in the iOS app is not synced: the watch offers its built-in list (`IncomingCallActivity.QUICK_REPLIES`)
+5. The reply list edited in the iOS app is read on every connection (A0E3D5B9) and cached on the watch
+6. Message notifications from Messages get a "Reply" action with those replies as chips (plus voice/keyboard); the text is saved as a draft on the iPhone, which posts a "Reply to …" notification that opens the Messages composer
 
 ## iPhone Companion App Watch Detection
 

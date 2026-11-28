@@ -93,6 +93,13 @@ final class QuickReplyLauncher: NSObject, UNUserNotificationCenterDelegate {
                                 didReceive response: UNNotificationResponse,
                                 withCompletionHandler completionHandler: @escaping () -> Void) {
         defer { completionHandler() }
+        if response.actionIdentifier == UNNotificationDefaultActionIdentifier,
+           let draft = response.notification.request.content.userInfo["draftID"] as? String,
+           let id = UUID(uuidString: draft) {
+            // A reply written on the watch: open it in the Messages composer.
+            DispatchQueue.main.async { DraftInbox.shared.pendingOpen = id }
+            return
+        }
         guard response.actionIdentifier == UNNotificationDefaultActionIdentifier,
               let string = response.notification.request.content.userInfo[Self.urlKey] as? String,
               let url = URL(string: string) else { return }
